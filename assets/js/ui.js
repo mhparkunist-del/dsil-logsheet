@@ -76,7 +76,7 @@
         else if (ctrl.type === 'checkbox') val = ctrl.checked ? 'true' : 'false';
         else val = ctrl.value;
       }
-      var show = String(val) === want;
+      var show = String(val) === want && !(el.parentElement && el.parentElement.closest('[data-show-if][hidden]'));
       el.hidden = !show;
       $all('input,select,textarea', el).forEach(function (i) { i.disabled = !show; });
     });
