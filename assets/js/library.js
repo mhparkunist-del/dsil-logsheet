@@ -1,42 +1,37 @@
 /* =====================================================================
-   DSIL Run Sheet – 라이브러리: 분류(소자/패키징)별 공정 모듈 + 공정 흐름(모듈·서브 흐름·분기점의 재조합)
+   DSIL Run Sheet – 라이브러리: 분류(소자/패키징)별 공정 모듈 + 공정 흐름(행 × 분기 시트 템플릿)
    기본 제공(seed) 항목은 수정·삭제 불가(복사만). 내가 만든 항목만 수정·삭제. 해시: #tab=modules | #tab=flows
+   흐름 편집기는 런시트와 같은 표(행 = 큰 스텝 · 대분류, 열 = 단위)에서 행·셀·분기점을 직접 고칩니다.
    ===================================================================== */
 (function () {
   'use strict';
 
   var CFG = window.DSIL_CONFIG || {};
-  var U = window.DSILUI, P = window.DSILParams, S = window.DSILStore, L = window.DSILLayout;
+  var U = window.DSILUI, P = window.DSILParams, S = window.DSILStore, SH = window.DSILSheet, SV = window.DSILSheetView;
   var esc = U.esc, $ = U.$, $all = U.$all, toast = U.toast, readForm = U.readForm, dialog = U.dialog, confirmDlg = U.confirmDlg, empty = U.empty;
   var store = S.create(CFG);
   var DOMAINS = CFG.domains || [];
+  var CATS = CFG.categories || [];
   var state = { ready: false, error: null, tab: 'modules', domain: '', mineOnly: false, modules: [], flows: [], runs: [], editModule: null, editFlow: null, q: '' };
 
-  function uid() { return 'it-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
   function me() { return store.getMe(); }
   function modById(id) { return state.modules.filter(function (m) { return m.id === id; })[0] || null; }
   function flowById(id) { return state.flows.filter(function (f) { return f.id === id; })[0] || null; }
   function domainInfo(id) { return DOMAINS.filter(function (d) { return d.id === id; })[0] || { id: id, label: id || '-', short: id || '-' }; }
   function domainBadge(id) { return '<span class="badge ' + (id === 'package' ? 'bg-indigo-lt' : 'bg-blue-lt') + '">' + esc(domainInfo(id).short) + '</span>'; }
   function readHash() { var m = /tab=(\w+)/.exec(window.location.hash); state.tab = m && m[1] === 'flows' ? 'flows' : 'modules'; var d = /domain=(\w+)/.exec(window.location.hash); if (d) state.domain = d[1] === 'all' ? '' : d[1]; }
-  function ctx() { return { modules: state.modules, flows: state.flows }; }
   function inDomain(x) { return !state.domain || x.domain === state.domain; }
   function canEditItem(x) { var m = me(); return !x.seed && !!m.id && (m.isAdmin || !x.ownerId || x.ownerId === m.id); }
   function isMine(x) { var m = me(); return !!m.id && x.ownerId === m.id; }
   function ownerBadge(x) { return x.seed ? '<span class="badge bg-secondary-lt" title="기본 제공: 수정·삭제 불가, 복사해서 쓰세요"><i class="ti ti-lock"></i> 기본</span>' : (isMine(x) ? '<span class="badge bg-green-lt">내 것</span>' : (x.ownerName ? '<span class="badge bg-secondary-lt">' + esc(x.ownerName) + '</span>' : '')); }
   function visible(list) { return list.filter(inDomain).filter(function (x) { return !state.mineOnly || isMine(x); }); }
+  function usesModule(sheet, id) { return (sheet.rows || []).some(function (r) { return Object.keys(r.cells || {}).some(function (k) { return r.cells[k] && r.cells[k].moduleId === id; }); }); }
+  function catSelect(name, value, allowFollow) { return '<select class="form-select" name="' + name + '">' + (allowFollow ? '<option value=""' + (!value ? ' selected' : '') + '>모듈 분류 따르기</option>' : '') + CATS.map(function (c) { return '<option value="' + c.id + '"' + (value === c.id ? ' selected' : '') + '>' + esc(c.label) + '</option>'; }).join('') + '</select>'; }
 
   function reload() { return Promise.all([store.listModules(), store.listFlows(), store.listRuns({ scope: 'mine' })]).then(function (r) { state.modules = r[0]; state.flows = r[1]; state.runs = r[2]; }); }
 
-  function moduleUsage(id) {
-    var flows = state.flows.filter(function (f) { var u = false; S.eachStep(f.items, function (it) { if (it.kind === 'module' && it.refId === id) u = true; }); return u; });
-    return { flows: flows, runs: state.runs.filter(function (r) { return r.steps.some(function (s) { return s.moduleId === id; }); }).length };
-  }
-  function flowUsage(id) {
-    var flows = state.flows.filter(function (f) { if (f.id === id) return false; var u = false; S.eachStep(f.items, function (it) { if (it.kind === 'flow' && it.refId === id) u = true; }); return u; });
-    return { flows: flows, runs: state.runs.filter(function (r) { return r.flowId === id; }).length };
-  }
-  function expandSafe(items, flowId) { try { return { tree: S.expandItems(ctx(), items, flowId ? [flowId] : [], ''), error: null }; } catch (e) { return { tree: null, error: e.message }; } }
+  function moduleUsage(id) { return { flows: state.flows.filter(function (f) { return usesModule(f, id); }), runs: state.runs.filter(function (r) { return usesModule(r, id); }).length }; }
+  function flowUsage(id) { return { runs: state.runs.filter(function (r) { return r.flowId === id; }).length }; }
 
   /* ---------- 렌더 ---------- */
   function renderChrome() {
@@ -63,7 +58,7 @@
       + '<div class="d-flex gap-2"><input type="search" class="form-control form-control-sm" id="mod-q" placeholder="검색" value="' + esc(state.q) + '" style="width:12rem"><button type="button" class="btn btn-sm btn-primary" data-action="mod-new"><i class="ti ti-plus me-1"></i>모듈 추가</button></div></div>';
     if (state.editModule) html += moduleEditor(state.editModule);
     if (!list.length) return html + '<div class="card">' + empty('box-off', '모듈이 없습니다', state.mineOnly ? '기본 모듈을 복사하거나 "모듈 추가"로 만드세요.' : '"모듈 추가"로 첫 공정 모듈을 만드세요.') + '</div>';
-    var cats = (CFG.categories || []).map(function (c) { return c.id; }), doms = DOMAINS.map(function (d) { return d.id; });
+    var cats = CATS.map(function (c) { return c.id; }), doms = DOMAINS.map(function (d) { return d.id; });
     list.sort(function (a, b) { var da = doms.indexOf(a.domain), db = doms.indexOf(b.domain); if (da !== db) return da - db; var ca = cats.indexOf(a.category), cb = cats.indexOf(b.category); return ca !== cb ? ca - cb : a.name.localeCompare(b.name, 'ko'); });
     html += '<div class="card"><div class="table-responsive"><table class="table table-vcenter card-table"><thead><tr><th>모듈</th><th class="w-1">분류</th><th>장비</th><th>조건 항목</th><th class="w-1">출처</th><th class="w-1"></th></tr></thead><tbody>'
       + list.map(function (m) {
@@ -81,11 +76,11 @@
       + '<input type="hidden" name="modId" value="' + esc(m.id || '') + '">'
       + '<div class="row g-2"><div class="col-md-3"><label class="form-label required">공정 분류</label><select class="form-select" name="domain">' + DOMAINS.map(function (d) { return '<option value="' + d.id + '"' + ((m.domain || state.domain || DOMAINS[0].id) === d.id ? ' selected' : '') + '>' + esc(d.label) + '</option>'; }).join('') + '</select></div>'
       + '<div class="col-md-4"><label class="form-label required">모듈 이름</label><input type="text" class="form-control" name="name" required value="' + esc(m.name || '') + '" autocomplete="off" placeholder="예: ALD 유전막"></div>'
-      + '<div class="col-md-3"><label class="form-label">세부 분류</label><select class="form-select" name="category">' + (CFG.categories || []).map(function (c) { return '<option value="' + c.id + '"' + ((m.category || 'etc') === c.id ? ' selected' : '') + '>' + esc(c.label) + '</option>'; }).join('') + '</select></div>'
+      + '<div class="col-md-3"><label class="form-label">세부 분류 <span class="form-label-description">행의 대분류 기본값</span></label><select class="form-select" name="category">' + CATS.map(function (c) { return '<option value="' + c.id + '"' + ((m.category || 'etc') === c.id ? ' selected' : '') + '>' + esc(c.label) + '</option>'; }).join('') + '</select></div>'
       + '<div class="col-md-2"><label class="form-label">예상 시간(분)</label><input type="number" class="form-control" name="minutes" min="0" value="' + esc(m.minutes || '') + '"></div></div>'
       + '<div class="row g-2 mt-1"><div class="col-md-4"><label class="form-label">장비</label><input type="text" class="form-control" name="equipment" value="' + esc(m.equipment || '') + '" autocomplete="off"></div><div class="col-md-8"><label class="form-label">설명</label><input type="text" class="form-control" name="description" value="' + esc(m.description || '') + '" autocomplete="off"></div></div>'
       + '<div class="mt-2"><label class="form-label">확인 사항 <span class="form-label-description">한 줄에 하나, 기록 창에 체크리스트로 표시</span></label><textarea class="form-control" name="checklist" rows="2">' + esc((m.checklist || []).join('\n')) + '</textarea></div>'
-      + (isNew || view ? '' : '<label class="form-check mt-3"><input class="form-check-input" type="checkbox" name="active"' + (m.active !== false ? ' checked' : '') + '><span class="form-check-label">사용 중 (끄면 새 흐름·스텝 추가 목록에서 숨김)</span></label>')
+      + (isNew || view ? '' : '<label class="form-check mt-3"><input class="form-check-input" type="checkbox" name="active"' + (m.active !== false ? ' checked' : '') + '><span class="form-check-label">사용 중 (끄면 새 흐름·행 추가 목록에서 숨김)</span></label>')
       + '<div class="d-flex align-items-center justify-content-between mt-4 mb-1"><div class="subheader mb-0">조건 항목 <span class="text-secondary fw-normal text-lowercase">런시트에서 계획값·실제값을 적는 칸</span></div>' + (view ? '' : '<button type="button" class="btn btn-sm" data-action="field-add"><i class="ti ti-plus me-1"></i>항목</button>') + '</div>'
       + '<div class="text-secondary small mb-2">이름 · 종류 · 단위 · 선택지(선택 종류) · 기본값(계획값으로 들어감) · 필수. 저장 키는 유지되므로 이름을 바꿔도 지난 기록과 연결됩니다.</div>'
       + '<div id="field-rows">' + (m.fields || []).map(P.fieldRowHtml).join('') + '</div></fieldset>'
@@ -94,98 +89,69 @@
 
   /* ---------- 흐름 ---------- */
   function renderFlows(flows) {
-    var html = '<div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3"><div class="text-secondary small">흐름은 런시트 템플릿입니다. 런을 만들 때 복사해 시작하거나, 런시트 편집에서 통째로 불러옵니다. <b>분기점</b>을 넣으면 기판 수량을 나눠 분기별로 다른 흐름을 지정하고, 분기점 뒤의 항목은 다시 합쳐진(merge) 공정입니다.</div>'
+    var html = '<div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3"><div class="text-secondary small">흐름은 런시트 템플릿입니다. 런을 만들 때 복사해 시작하거나, 런시트 편집에서 통째로 불러옵니다. 행은 <b>큰 스텝(대분류)</b>이고, <b>분기점</b>은 행 범위에 걸쳐 수량을 나눕니다. 분기 구간에서도 행은 맞춰지며, 셀을 비우면 그 분기는 그 행을 건너뜁니다.</div>'
       + '<button type="button" class="btn btn-sm btn-primary" data-action="flow-new"><i class="ti ti-plus me-1"></i>흐름 추가</button></div>';
     if (state.editFlow) html += flowEditor(state.editFlow);
-    if (!flows.length) return html + '<div class="card">' + empty('git-branch', '흐름이 없습니다', state.mineOnly ? '기본 흐름을 복사하거나 "흐름 추가"로 만드세요.' : '"흐름 추가"에서 모듈을 순서대로 넣으세요.') + '</div>';
-    html += '<div class="card"><div class="table-responsive"><table class="table table-vcenter card-table"><thead><tr><th>흐름</th><th>구성</th><th class="w-1">스텝</th><th class="w-1">수량</th><th class="w-1">출처</th><th class="w-1"></th></tr></thead><tbody>'
+    if (!flows.length) return html + '<div class="card">' + empty('git-branch', '흐름이 없습니다', state.mineOnly ? '기본 흐름을 복사하거나 "흐름 추가"로 만드세요.' : '"흐름 추가"에서 모듈을 행으로 넣으세요.') + '</div>';
+    html += '<div class="card"><div class="table-responsive"><table class="table table-vcenter card-table"><thead><tr><th>흐름</th><th>구성 (행)</th><th class="w-1">스텝</th><th class="w-1">수량</th><th class="w-1">출처</th><th class="w-1"></th></tr></thead><tbody>'
       + flows.map(function (f) {
-        var ex = expandSafe(f.items, f.id), st = ex.tree ? L.stats(L.resolve(ex.tree)) : { steps: 0, splits: 0 }, ed = canEditItem(f);
+        var st = SH.stats(f), ed = canEditItem(f), err = null; try { SH.validate(f, f.unitLabel); } catch (e) { err = e.message; }
         return '<tr><td><div class="fw-medium">' + domainBadge(f.domain) + ' ' + esc(f.name) + '</div>' + (f.device ? '<div class="small text-primary">' + esc(f.device) + '</div>' : '') + (f.description ? '<div class="small text-secondary">' + esc(f.description) + '</div>' : '') + '</td>'
-          + '<td class="small">' + itemChips(f.items) + '</td>'
-          + '<td class="text-nowrap tnum">' + st.steps + (st.splits ? ' <span class="badge bg-purple-lt" title="분기점">분기 ' + st.splits + '</span>' : '') + (ex.error ? ' <span class="text-red" title="' + esc(ex.error) + '">!</span>' : '') + '</td><td class="text-nowrap small">' + esc(f.unitLabel) + ' ' + f.unitCount + '</td>'
+          + '<td class="small">' + rowChips(f) + '</td>'
+          + '<td class="text-nowrap tnum">' + st.rows + '행 · ' + st.cells + (st.splits ? ' <span class="badge bg-purple-lt" title="분기점">분기 ' + st.splits + '</span>' : '') + (err ? ' <span class="text-red" title="' + esc(err) + '">!</span>' : '') + '</td><td class="text-nowrap small">' + esc(f.unitLabel) + ' ' + f.unitCount + '</td>'
           + '<td class="text-nowrap">' + ownerBadge(f) + '</td>'
           + '<td class="text-end text-nowrap"><a href="../index.html?new=' + encodeURIComponent(f.id) + '" class="btn btn-sm btn-primary me-1" title="이 흐름을 복사해 새 런 시작"><i class="ti ti-player-play me-1"></i>런 시작</a><button type="button" class="btn btn-sm btn-ghost-secondary btn-icon" data-action="flow-copy" data-id="' + esc(f.id) + '" title="복사해서 내 흐름으로"><i class="ti ti-copy"></i></button>' + (ed ? '<button type="button" class="btn btn-sm btn-ghost-primary btn-icon" data-action="flow-edit" data-id="' + esc(f.id) + '" title="수정"><i class="ti ti-pencil"></i></button><button type="button" class="btn btn-sm btn-ghost-danger btn-icon" data-action="flow-delete" data-id="' + esc(f.id) + '" title="삭제"><i class="ti ti-trash"></i></button>' : '<button type="button" class="btn btn-sm btn-ghost-secondary btn-icon" data-action="flow-view" data-id="' + esc(f.id) + '" title="보기"><i class="ti ti-eye"></i></button>') + '</td></tr>';
       }).join('') + '</tbody></table></div></div>';
     return html;
   }
-  function itemChips(items) {
-    return items.map(function (it) {
-      if (it.kind === 'split') return '<span class="badge bg-purple text-white me-1 mb-1"><i class="ti ti-git-branch"></i> ' + esc(it.name || '분기') + ': ' + it.branches.map(function (b) { return esc(b.name) + '(' + b.count + ')'; }).join(' / ') + '</span>';
-      var ref = it.kind === 'flow' ? flowById(it.refId) : modById(it.refId);
-      return '<span class="badge ' + (it.kind === 'flow' ? 'bg-purple-lt' : 'bg-blue-lt') + ' me-1 mb-1">' + (it.kind === 'flow' ? '<i class="ti ti-git-branch"></i> ' : '') + esc(it.label || (ref ? ref.name : '?')) + '</span>';
+  function rowChips(f) {
+    var splitAt = {}; (f.splits || []).forEach(function (s) { splitAt[s.fromRowId] = (splitAt[s.fromRowId] || []).concat([s]); });
+    return f.rows.map(function (r, i) {
+      var c = P.catInfo(r.category);
+      return (splitAt[r.id] || []).map(function (s) { return '<span class="badge bg-purple text-white me-1 mb-1"><i class="ti ti-git-branch"></i> ' + esc(s.name || '분기') + ': ' + s.branches.map(function (b) { return esc(b.name) + '(' + b.count + ')'; }).join(' / ') + '</span>'; }).join('')
+        + '<span class="badge bg-' + c.color + '-lt me-1 mb-1" title="' + esc(c.label) + '">' + (i + 1) + '. ' + esc(r.name || '?') + '</span>';
     }).join('');
   }
 
-  /* ----- 흐름 편집기 (트리) ----- */
-  function findList(items, containerId, count) {
-    if (containerId === 'root') return { items: items, count: count };
-    var res = null;
-    (function walk(list) { list.forEach(function (n) { if (res || n.kind !== 'split') return; n.branches.forEach(function (b) { if (res) return; if (b.id === containerId) res = { items: b.items, count: b.count, branch: b }; else walk(b.items); }); }); })(items);
-    return res;
+  /* ----- 흐름 편집기 (시트 표) ----- */
+  function cellRefHtml(c, leaf, row, i) {
+    var f = state.editFlow, mod = modById(c.moduleId), view = !!f._view;
+    var html = '<div><b>' + esc(c.label || (mod ? mod.name : '(삭제된 모듈)')) + '</b>' + (c.label && mod ? ' <span class="small text-secondary">' + esc(mod.name) + '</span>' : '') + (mod && mod.domain !== f.domain ? ' ' + domainBadge(mod.domain) : '') + '</div>'
+      + (mod && mod.equipment ? '<div class="small text-secondary">' + esc(mod.equipment) + '</div>' : '')
+      + (mod && Object.keys(c.params || {}).length ? '<div class="small text-primary"><i class="ti ti-adjustments"></i> ' + esc(P.text(mod.fields, c.params, ' · ')) + '</div>' : '')
+      + (c.note ? '<div class="small text-secondary">' + esc(c.note) + '</div>' : '');
+    if (!view) html += '<div class="d-flex gap-1 mt-1"><button type="button" class="btn btn-sm btn-ghost-primary btn-icon" data-action="fe-cell-params" data-id="' + esc(c.id) + '" title="계획 조건 · 표시 이름"><i class="ti ti-adjustments"></i></button><button type="button" class="btn btn-sm btn-ghost-danger btn-icon" data-action="fe-cell-clear" data-row="' + esc(row.id) + '" data-leaf="' + esc(leaf.id) + '" title="이 칸 비우기 (이 분기는 이 행을 건너뜀)"><i class="ti ti-x"></i></button></div>';
+    return html;
   }
-  function locateItem(items, id) {
-    var res = null;
-    (function walk(list, container) { list.forEach(function (n, i) { if (res) return; if (n.id === id) { res = { list: list, index: i, node: n, container: container }; return; } if (n.kind === 'split') n.branches.forEach(function (b) { walk(b.items, b.id); }); }); })(items, 'root');
-    return res;
+  function editorTable(f) {
+    var view = !!f._view;
+    return SV.table(f, { unitLabel: f.unitLabel, tableClass: 'table table-bordered split-table sheet-editor',
+      rowHead: function (row, i) {
+        var html = '<div class="d-flex gap-2 align-items-start"><span class="step-num">' + (i + 1) + '</span><div class="flex-fill min-w-0"><div class="fw-bold row-name">' + esc(row.name || '(이름 없음)') + '</div><div>' + P.catBadge(row.category) + '</div>' + (row.note ? '<div class="small text-secondary"><i class="ti ti-note"></i> ' + esc(row.note) + '</div>' : '') + '</div></div>';
+        if (!view) html += '<div class="d-flex flex-wrap gap-1 mt-1"><button type="button" class="btn btn-sm btn-ghost-secondary btn-icon" data-action="fe-row-insert" data-index="' + i + '" title="이 앞에 행"><i class="ti ti-row-insert-top"></i></button><button type="button" class="btn btn-sm btn-ghost-secondary btn-icon" data-action="fe-row-move" data-id="' + esc(row.id) + '" data-dir="up"' + (i === 0 ? ' disabled' : '') + '><i class="ti ti-chevron-up"></i></button><button type="button" class="btn btn-sm btn-ghost-secondary btn-icon" data-action="fe-row-move" data-id="' + esc(row.id) + '" data-dir="down"' + (i === f.rows.length - 1 ? ' disabled' : '') + '><i class="ti ti-chevron-down"></i></button><button type="button" class="btn btn-sm btn-ghost-primary btn-icon" data-action="fe-row-edit" data-id="' + esc(row.id) + '" title="대분류·이름·메모"><i class="ti ti-pencil"></i></button><button type="button" class="btn btn-sm btn-ghost-secondary btn-icon text-purple" data-action="fe-split-add" data-row="' + esc(row.id) + '" title="이 행부터 분기점"' + (f.unitCount < 2 ? ' disabled' : '') + '><i class="ti ti-git-branch"></i></button><button type="button" class="btn btn-sm btn-ghost-danger btn-icon" data-action="fe-row-remove" data-id="' + esc(row.id) + '" title="행 삭제"><i class="ti ti-x"></i></button></div>';
+        return html;
+      },
+      cell: cellRefHtml,
+      skip: function (leaf, row) { return '<div class="cell-skip-text"><i class="ti ti-arrow-narrow-down"></i> 건너뜀</div>' + (view ? '' : '<button type="button" class="btn btn-sm mt-1" data-action="fe-cell-set" data-row="' + esc(row.id) + '" data-leaf="' + esc(leaf.id) + '"><i class="ti ti-plus me-1"></i>모듈</button>'); },
+      head: function (leaf, split) { return '<div class="d-flex justify-content-between align-items-center gap-1 flex-wrap"><div><i class="ti ti-git-branch me-1"></i><b>' + esc(leaf.name) + '</b> <span class="small">' + leaf.count + ' ' + esc(f.unitLabel) + '</span></div>' + (view ? '' : '<span class="d-flex gap-1"><button type="button" class="btn btn-sm btn-ghost-secondary btn-icon" data-action="fe-split-edit" data-id="' + esc(split.id) + '" title="분기 수정"><i class="ti ti-adjustments"></i></button><button type="button" class="btn btn-sm btn-ghost-danger btn-icon" data-action="fe-split-remove" data-id="' + esc(split.id) + '" title="분기점 삭제"><i class="ti ti-x"></i></button></span>') + '</div>'; },
+      merge: function () { return '<i class="ti ti-arrows-join"></i> 합침'; },
+      splitLabel: function (sp) { var r = SH.range(f, sp); return '<i class="ti ti-git-branch text-purple"></i> <b>' + esc(sp.name || '분기점') + '</b><div class="small text-secondary">' + (r.from + 1) + '~' + (sp.toRowId ? (r.to + 1) : '끝') + '행</div>'; },
+      mergeLabel: function (sp) { return '<i class="ti ti-arrows-join text-primary"></i> <b>' + esc(sp.name || '분기') + '</b> 끝'; } });
   }
-  function itemRow(it, i, depth) {
-    var ref = it.kind === 'flow' ? flowById(it.refId) : modById(it.refId);
-    var name = ref ? ref.name : '(삭제됨)';
-    var sub = ref ? (it.kind === 'flow' ? ref.items.length + '항목' : (ref.equipment || P.catInfo(ref.category).label)) : '';
-    var pt = ref && it.kind === 'module' && Object.keys(it.params || {}).length ? P.text(ref.fields, it.params, ' · ') : (ref && it.kind === 'flow' && Object.keys(it.params || {}).length ? Object.keys(it.params).map(function (k) { return k + ': ' + it.params[k]; }).join(' · ') : '');
-    return '<div class="flow-item" data-item="' + esc(it.id) + '"><span class="step-num">' + (i + 1) + '</span>'
-      + '<div class="flex-fill"><div><span class="badge ' + (it.kind === 'flow' ? 'bg-purple-lt' : 'bg-blue-lt') + ' me-1">' + (it.kind === 'flow' ? '흐름' : '모듈') + '</span><b>' + esc(name) + '</b> <span class="small text-secondary">' + esc(sub) + '</span>' + (ref && ref.domain && ref.domain !== (state.editFlow && state.editFlow.domain) ? ' ' + domainBadge(ref.domain) : '') + '</div>'
-      + '<div class="row g-1 mt-1"><div class="col-6"><input type="text" class="form-control form-control-sm" data-f="label" placeholder="표시 이름 (선택)" value="' + esc(it.label || '') + '"></div><div class="col-6"><input type="text" class="form-control form-control-sm" data-f="note" placeholder="메모 · 지시" value="' + esc(it.note || '') + '"></div></div>'
-      + (pt ? '<div class="small text-primary mt-1"><i class="ti ti-adjustments"></i> ' + esc(pt) + '</div>' : '') + '</div>'
-      + '<div class="d-flex flex-column gap-1">' + (ref ? '<button type="button" class="btn btn-sm btn-ghost-primary btn-icon" data-action="item-params" data-id="' + esc(it.id) + '" title="계획 조건 (기본값과 다른 값)"><i class="ti ti-adjustments"></i></button>' : '') + '<span class="d-flex gap-1"><button type="button" class="btn btn-sm btn-ghost-secondary btn-icon" data-action="item-move" data-id="' + esc(it.id) + '" data-dir="up" title="위로"><i class="ti ti-chevron-up"></i></button><button type="button" class="btn btn-sm btn-ghost-secondary btn-icon" data-action="item-move" data-id="' + esc(it.id) + '" data-dir="down" title="아래로"><i class="ti ti-chevron-down"></i></button><button type="button" class="btn btn-sm btn-ghost-danger btn-icon" data-action="item-remove" data-id="' + esc(it.id) + '" title="빼기"><i class="ti ti-x"></i></button></span></div></div>';
-  }
-  function splitBlock(sp, i, parentCount, depth) {
-    var f = state.editFlow, sum = sp.branches.reduce(function (a, b) { return a + (Number(b.count) || 0); }, 0);
-    return '<div class="split-block depth-' + depth + '" data-item="' + esc(sp.id) + '"><div class="split-head"><span class="step-num">' + (i + 1) + '</span><span class="badge bg-purple text-white"><i class="ti ti-git-branch"></i> 분기점</span>'
-      + '<input type="text" class="form-control form-control-sm" data-f="splitName" placeholder="분기점 이름 (예: 접촉 금속)" value="' + esc(sp.name || '') + '" style="max-width:16rem">'
-      + '<span class="small text-secondary text-nowrap">나눌 수량 ' + parentCount + ' ' + esc(f.unitLabel || '기판') + (sum !== parentCount ? ' · <span class="text-red fw-bold">합계 ' + sum + ' ≠ ' + parentCount + '</span>' : ' · 합계 ' + sum) + '</span>'
-      + '<span class="ms-auto d-flex gap-1"><button type="button" class="btn btn-sm" data-action="branch-add" data-id="' + esc(sp.id) + '"><i class="ti ti-plus me-1"></i>분기</button><button type="button" class="btn btn-sm btn-ghost-secondary btn-icon" data-action="item-move" data-id="' + esc(sp.id) + '" data-dir="up" title="위로"><i class="ti ti-chevron-up"></i></button><button type="button" class="btn btn-sm btn-ghost-secondary btn-icon" data-action="item-move" data-id="' + esc(sp.id) + '" data-dir="down" title="아래로"><i class="ti ti-chevron-down"></i></button><button type="button" class="btn btn-sm btn-ghost-danger btn-icon" data-action="item-remove" data-id="' + esc(sp.id) + '" title="분기점 빼기"><i class="ti ti-x"></i></button></span></div>'
-      + '<div class="split-branches">' + sp.branches.map(function (b) {
-        return '<div class="split-branch" data-branch="' + esc(b.id) + '"><div class="branch-head"><i class="ti ti-arrow-bear-right text-purple"></i><input type="text" class="form-control form-control-sm" data-f="bname" value="' + esc(b.name) + '" placeholder="분기 이름"><input type="number" class="form-control form-control-sm" data-f="bcount" value="' + b.count + '" min="1" style="max-width:5rem" title="수량"><button type="button" class="btn btn-sm btn-ghost-danger btn-icon" data-action="branch-remove" data-id="' + esc(b.id) + '" data-split="' + esc(sp.id) + '" title="이 분기 빼기"><i class="ti ti-x"></i></button></div>' + renderItems(b.items, b.id, b.count, depth + 1) + '</div>';
-      }).join('') + '</div><div class="small text-secondary mt-1"><i class="ti ti-arrows-join"></i> 분기점 뒤의 항목부터 다시 합쳐진(merge) 공정</div></div>';
-  }
-  function addBar(containerId, count, depth) {
-    var f = state.editFlow, dom = f.domain || DOMAINS[0].id;
+  function addBar(f) {
+    var dom = f.domain || DOMAINS[0].id;
     var mods = state.modules.filter(function (m) { return m.active !== false; });
-    var cats = CFG.categories || [];
     var domOrder = DOMAINS.filter(function (d) { return d.id === dom; }).concat(DOMAINS.filter(function (d) { return d.id !== dom; }));
-    var modOpts = domOrder.map(function (d) { var inD = mods.filter(function (m) { return m.domain === d.id; }); if (!inD.length) return ''; return cats.map(function (c) { var ms = inD.filter(function (m) { return m.category === c.id; }); return ms.length ? '<optgroup label="' + esc((d.id === dom ? '' : d.short + ' · ') + c.label) + '">' + ms.map(function (m) { return '<option value="' + esc(m.id) + '">' + esc(m.name) + '</option>'; }).join('') + '</optgroup>' : ''; }).join(''); }).join('');
-    var flowPool = state.flows.filter(function (x) { return x.id !== f.id && !S.hasSplit(x.items) && !(f.id && flowUsage(f.id).flows.some(function (y) { return y.id === x.id; })); });
-    var flowOpts = flowPool.filter(function (x) { return x.domain === dom; }).concat(flowPool.filter(function (x) { return x.domain !== dom; })).map(function (x) { return '<option value="' + esc(x.id) + '">' + (x.domain !== dom ? '[' + esc(domainInfo(x.domain).short) + '] ' : '') + esc(x.name) + ' (' + x.items.length + '항목)</option>'; }).join('');
-    return '<div class="add-bar row g-2 align-items-end mt-1"><div class="col-md-5"><div class="input-group input-group-sm"><span class="input-group-text">모듈</span><select class="form-select" id="am-' + esc(containerId) + '">' + modOpts + '</select><button type="button" class="btn" data-action="item-add-module" data-container="' + esc(containerId) + '"><i class="ti ti-plus"></i></button></div></div>'
-      + '<div class="col-md-5"><div class="input-group input-group-sm"><span class="input-group-text">흐름</span><select class="form-select" id="af-' + esc(containerId) + '"' + (flowOpts ? '' : ' disabled') + '>' + (flowOpts || '<option value="">넣을 수 있는 흐름 없음</option>') + '</select><button type="button" class="btn" data-action="item-add-flow" data-container="' + esc(containerId) + '"' + (flowOpts ? '' : ' disabled') + '><i class="ti ti-plus"></i></button></div></div>'
-      + '<div class="col-md-2"><button type="button" class="btn btn-sm w-100" data-action="item-add-split" data-container="' + esc(containerId) + '"' + (count < 2 ? ' disabled title="수량이 1이라 나눌 수 없습니다"' : '') + '><i class="ti ti-git-branch me-1"></i>분기점</button></div></div>';
-  }
-  function renderItems(items, containerId, count, depth) {
-    var html = items.length ? items.map(function (it, i) { return it.kind === 'split' ? splitBlock(it, i, count, depth) : itemRow(it, i, depth); }).join('') : '<div class="text-secondary small py-1">' + (containerId === 'root' ? '아래에서 모듈·흐름·분기점을 추가하세요.' : '이 분기에 넣을 모듈·흐름을 추가하세요.') + '</div>';
-    return '<div class="items-list" data-list="' + esc(containerId) + '">' + html + '</div>' + (state.editFlow && state.editFlow._view ? '' : addBar(containerId, count, depth));
-  }
-  function previewTable(f) {
-    var ex = expandSafe(f.items, f.id);
-    if (ex.error) return '<div class="alert alert-danger py-2 px-3 small mb-0">' + esc(ex.error) + '</div>';
-    var err = null; try { S.checkSplits(f.items, f.unitCount, f.unitLabel); } catch (e) { err = e.message; }
-    var tree = L.resolve(ex.tree), st = L.stats(tree), rows = L.rows(tree, f.unitCount, {});
-    var units = []; for (var i = 0; i < f.unitCount; i++) units.push((f.unitLabel || '기판') + ' ' + (i + 1));
-    var html = (err ? '<div class="alert alert-warning py-2 px-3 small">' + esc(err) + '</div>' : '') + '<div class="text-secondary small mb-1">' + st.steps + '스텝' + (st.splits ? ' · 분기점 ' + st.splits + '개' : '') + ' · 열 = ' + esc(f.unitLabel || '기판') + '</div>'
-      + '<div class="table-responsive"><table class="table table-bordered split-mini"><thead><tr>' + units.map(function (u) { return '<th>' + esc(u) + '</th>'; }).join('') + '</tr></thead><tbody>';
-    rows.forEach(function (row) {
-      html += '<tr>' + row.cells.map(function (c) {
-        var span = c.count > 1 ? ' colspan="' + c.count + '"' : '';
-        if (c.type === 'branch-head') return '<td' + span + ' class="cell-branch-head"><b>' + esc(c.branch.name) + '</b> ' + c.branch.count + (c.mismatch ? ' <span class="text-red">!</span>' : '') + '</td>';
-        if (c.type !== 'step') return '<td' + span + ' class="cell-empty"></td>';
-        var s = c.step; return '<td' + span + (s.missing ? ' class="text-red"' : '') + '>' + (s.group ? '<span class="step-group">' + esc(s.group) + '</span><br>' : '') + '<b>' + esc(s.name) + '</b>' + (s.fields && s.fields.length ? '<br><span class="text-secondary">' + esc(P.text(s.fields, s.planned, ' · ')) + '</span>' : '') + '</td>';
-      }).join('') + '</tr>';
-    });
-    return html + '</tbody></table></div>';
+    var modOpts = domOrder.map(function (d) { var inD = mods.filter(function (m) { return m.domain === d.id; }); if (!inD.length) return ''; return CATS.map(function (c) { var ms = inD.filter(function (m) { return m.category === c.id; }); return ms.length ? '<optgroup label="' + esc((d.id === dom ? '' : d.short + ' · ') + c.label) + '">' + ms.map(function (m) { return '<option value="' + esc(m.id) + '">' + esc(m.name) + '</option>'; }).join('') + '</optgroup>' : ''; }).join(''); }).join('');
+    var pool = state.flows.filter(function (x) { return x.id !== f.id && x.active !== false; });
+    var flowOpts = pool.filter(function (x) { return x.domain === dom; }).concat(pool.filter(function (x) { return x.domain !== dom; })).map(function (x) { var st = SH.stats(x); return '<option value="' + esc(x.id) + '">' + (x.domain !== dom ? '[' + esc(domainInfo(x.domain).short) + '] ' : '') + esc(x.name) + ' (' + st.rows + '행' + (st.splits ? ' · 분기 ' + st.splits + ' · ' + esc(x.unitLabel) + ' ' + x.unitCount : '') + ')</option>'; }).join('');
+    return '<div class="add-bar row g-2 align-items-end mt-2"><div class="col-md-5"><div class="input-group input-group-sm"><span class="input-group-text">모듈 → 행</span><select class="form-select" id="fe-am">' + modOpts + '</select><button type="button" class="btn" data-action="fe-add-module" title="끝에 행 추가 (모든 분기에 같은 셀)"><i class="ti ti-plus"></i></button><button type="button" class="btn" data-action="fe-row-insert" data-index="end" title="대분류·이름·분기 지정해서 추가"><i class="ti ti-adjustments"></i></button></div></div>'
+      + '<div class="col-md-5"><div class="input-group input-group-sm"><span class="input-group-text">흐름 이어 붙이기</span><select class="form-select" id="fe-af"' + (flowOpts ? '' : ' disabled') + '>' + (flowOpts || '<option value="">넣을 수 있는 흐름 없음</option>') + '</select><button type="button" class="btn" data-action="fe-add-flow"' + (flowOpts ? '' : ' disabled') + '><i class="ti ti-plus"></i></button></div></div>'
+      + '<div class="col-md-2"><button type="button" class="btn btn-sm w-100" data-action="fe-split-add"' + (f.unitCount < 2 ? ' disabled title="수량이 1이라 나눌 수 없습니다"' : '') + '><i class="ti ti-git-branch me-1"></i>분기점</button></div></div>';
   }
   function flowEditor(f) {
-    var isNew = !f.id, view = !!f._view;
+    var isNew = !f.id, view = !!f._view, err = null, st = SH.stats(f);
+    try { SH.validate(f, f.unitLabel); } catch (e) { err = e.message; }
     return '<div class="card mb-3 border-primary" id="flow-form-card"><div class="card-header"><h3 class="card-title">' + (view ? '흐름 보기: ' + esc(f.name) + ' <span class="text-secondary fw-normal small">(수정하려면 복사)</span>' : isNew ? '흐름 추가' : '흐름 수정: ' + esc(f.name)) + '</h3></div><div class="card-body"><form id="flow-form"><fieldset' + (view ? ' disabled' : '') + '>'
       + '<input type="hidden" name="flowId" value="' + esc(f.id || '') + '">'
       + '<div class="row g-2"><div class="col-md-3"><label class="form-label required">공정 분류</label><select class="form-select" name="domain">' + DOMAINS.map(function (d) { return '<option value="' + d.id + '"' + ((f.domain || state.domain || DOMAINS[0].id) === d.id ? ' selected' : '') + '>' + esc(d.label) + '</option>'; }).join('') + '</select></div>'
@@ -193,40 +159,87 @@
       + '<div class="col-md-4"><label class="form-label">소자 · 대상</label><input type="text" class="form-control" name="device" value="' + esc(f.device || '') + '" autocomplete="off"></div></div>'
       + '<div class="row g-2 mt-1"><div class="col-md-6"><label class="form-label">설명</label><input type="text" class="form-control" name="description" value="' + esc(f.description || '') + '" autocomplete="off"></div>'
       + '<div class="col-6 col-md-3"><label class="form-label">단위</label><select class="form-select" name="unitLabel">' + (CFG.unitLabels || []).map(function (u) { return '<option value="' + esc(u) + '"' + ((f.unitLabel || '기판') === u ? ' selected' : '') + '>' + esc(u) + '</option>'; }).join('') + ((CFG.unitLabels || []).indexOf(f.unitLabel || '기판') < 0 ? '<option value="' + esc(f.unitLabel) + '" selected>' + esc(f.unitLabel) + '</option>' : '') + '</select></div>'
-      + '<div class="col-6 col-md-3"><label class="form-label required">기본 수량 <span class="form-label-description">런에서 바꿀 수 있음</span></label><input type="number" class="form-control" name="unitCount" min="1" required value="' + (f.unitCount || 1) + '"></div></div>'
-      + '<div class="row g-3 mt-2"><div class="col-lg-7"><div class="subheader mb-2">구성 (순서대로) <span class="text-secondary fw-normal">분기점 안의 분기마다 따로 흐름을 넣고, 분기점 뒤에 넣는 항목은 합쳐진 공정입니다</span></div>' + renderItems(f.items, 'root', f.unitCount || 1, 0) + '</div>'
-      + '<div class="col-lg-5"><div class="subheader mb-2">펼친 런시트 미리보기</div><div id="flow-preview">' + previewTable(f) + '</div></div></div></fieldset>'
-      + '<div class="mt-4 d-flex gap-2">' + (view ? '<button type="button" class="btn btn-primary" data-action="flow-copy" data-id="' + esc(f.id) + '"><i class="ti ti-copy me-1"></i>복사해서 내 흐름으로</button>' : '<button type="submit" class="btn btn-primary">' + (isNew ? '추가' : '저장') + '</button>') + '<button type="button" class="btn" data-action="flow-cancel">' + (view ? '닫기' : '취소') + '</button></div></form></div></div>';
+      + '<div class="col-6 col-md-3"><label class="form-label required">기본 수량 <span class="form-label-description">런에서 바꿀 수 있음</span></label><input type="number" class="form-control" name="unitCount" min="1" required value="' + (f.unitCount || 1) + '"' + ((f.splits || []).length ? ' title="분기점이 있으면 분기 수량 합과 맞아야 합니다"' : '') + '></div></div></fieldset>'
+      + '<div class="d-flex flex-wrap align-items-center gap-2 mt-3 mb-1"><div class="subheader mb-0">런시트 (행 = 큰 스텝 · 대분류, 열 = ' + esc(f.unitLabel || '기판') + ')</div><span class="text-secondary small">' + st.rows + '행 · ' + st.cells + '스텝' + (st.splits ? ' · 분기점 ' + st.splits + '개' : '') + '</span></div>'
+      + (err ? '<div class="alert alert-warning py-2 px-3 small">' + esc(err) + '</div>' : '')
+      + (f.rows.length ? '<div class="table-responsive">' + editorTable(f) + '</div>' : '<div class="text-secondary small py-2">아래에서 모듈을 행으로 추가하거나 흐름을 이어 붙이세요.</div>')
+      + (view ? '' : addBar(f))
+      + '<div class="mt-4 d-flex gap-2">' + (view ? '<button type="button" class="btn btn-primary" data-action="flow-copy" data-id="' + esc(f.id) + '"><i class="ti ti-copy me-1"></i>복사해서 내 흐름으로</button>' : '<button type="submit" class="btn btn-primary"' + (err ? ' disabled' : '') + '>' + (isNew ? '추가' : '저장') + '</button>') + '<button type="button" class="btn" data-action="flow-cancel">' + (view ? '닫기' : '취소') + '</button></div></form></div></div>';
   }
   function syncFromDom() {
     var f = state.editFlow, form = $('#flow-form'); if (!f || !form || f._view) return;
     var v = readForm(form); f.domain = v.domain; f.name = v.name; f.device = v.device; f.description = v.description; f.unitLabel = v.unitLabel; f.unitCount = Math.max(1, Math.round(Number(v.unitCount)) || 1);
-    $all('.flow-item[data-item]', form).forEach(function (row) { var loc = locateItem(f.items, row.getAttribute('data-item')); if (!loc) return; loc.node.label = row.querySelector('[data-f="label"]').value; loc.node.note = row.querySelector('[data-f="note"]').value; });
-    $all('.split-block[data-item]', form).forEach(function (blk) { var loc = locateItem(f.items, blk.getAttribute('data-item')); if (!loc) return; var inp = blk.querySelector(':scope > .split-head [data-f="splitName"]'); if (inp) loc.node.name = inp.value; });
-    $all('[data-branch]', form).forEach(function (el) {
-      var bid = el.getAttribute('data-branch'), found = null;
-      S.eachSplit(f.items, function (sp) { sp.branches.forEach(function (b) { if (b.id === bid) found = b; }); });
-      if (!found) return;
-      var n = el.querySelector(':scope > .branch-head [data-f="bname"]'), c = el.querySelector(':scope > .branch-head [data-f="bcount"]');
-      if (n) found.name = n.value; if (c) found.count = Math.max(1, Math.round(Number(c.value)) || 1);
+  }
+  function rerender() { var card = $('#flow-form-card'); if (!card) return; var tmp = document.createElement('div'); tmp.innerHTML = flowEditor(state.editFlow); card.replaceWith(tmp.firstElementChild); }
+  /* 편집 연산: 사본에서 실행, 성공하면 반영 */
+  function mutate(fn) {
+    syncFromDom();
+    var f = state.editFlow, work = SH.clone(f);
+    try { fn(work); } catch (e) { toast(e.message, true); return false; }
+    state.editFlow = work; rerender(); return true;
+  }
+  function moduleOptions(domain, showAll) {
+    var mods = state.modules.filter(function (m) { return m.active !== false && (showAll || m.domain === domain); });
+    var html = CATS.map(function (c) { var ms = mods.filter(function (m) { return m.category === c.id; }); return ms.length ? '<optgroup label="' + esc(c.label) + '">' + ms.map(function (m) { return '<option value="' + esc(m.id) + '">' + esc(m.name) + (m.domain !== domain ? ' [' + esc(domainInfo(m.domain).short) + ']' : '') + '</option>'; }).join('') + '</optgroup>' : ''; }).join('');
+    return { html: html, mods: mods };
+  }
+  function moduleBlock(domain, preModule) {
+    var opt = moduleOptions(domain, false), optAll = moduleOptions(domain, true);
+    return '<div class="d-flex align-items-end gap-2"><div class="flex-fill"><label class="form-label required">모듈</label><select class="form-select" name="moduleId" required>' + (preModule ? opt.html.replace('value="' + preModule + '"', 'value="' + preModule + '" selected') : opt.html) + '</select></div><label class="form-check mb-2 text-nowrap"><input class="form-check-input" type="checkbox" name="showAll"><span class="form-check-label">다른 분류도</span></label></div>'
+      + '<div data-show-if="showAll=true"><label class="form-label">모든 분류의 모듈</label><select class="form-select" name="moduleIdAll">' + optAll.html + '</select></div>'
+      + '<div class="mt-2"><label class="form-label">표시 이름 <span class="form-label-description">비우면 모듈 이름</span></label><input type="text" class="form-control" name="cellLabel" autocomplete="off"></div>'
+      + optAll.mods.map(function (m) { return '<div data-show-if="moduleId=' + esc(m.id) + '" class="mt-2 param-block"><div class="subheader mb-1">계획 조건 <span class="text-secondary fw-normal">기본값과 다른 값만 저장</span></div>' + P.inputs(m.fields, S.defaults(m.fields), { optional: true }) + '</div>'; }).join('');
+  }
+  function paramsDiff(mod, vals) {
+    var d = S.defaults(mod.fields), diff = {};
+    mod.fields.forEach(function (fd) { var x = vals[fd.key]; if (x === undefined) return; if (fd.type === 'check') { if (!!x !== !!d[fd.key]) diff[fd.key] = !!x; return; } if (String(x) === '') { if (d[fd.key] !== undefined) diff[fd.key] = ''; return; } if (String(x) !== String(d[fd.key] === undefined ? '' : d[fd.key])) diff[fd.key] = fd.type === 'number' && !isNaN(Number(x)) ? Number(x) : x; });
+    return diff;
+  }
+  function readModuleSpec(v) { var id = v.showAll && v.moduleIdAll ? v.moduleIdAll : v.moduleId, mod = modById(id); if (!mod) throw new Error('모듈을 고르세요.'); return { moduleId: id, label: v.cellLabel, params: paramsDiff(mod, P.read(mod.fields, v)), mod: mod }; }
+  function rowInsertDialog(index, preModule) {
+    var f = state.editFlow, atEnd = index >= f.rows.length, leaves = SH.leavesIfInserted(f, index);
+    var body = '<div class="text-secondary small mb-2"><i class="ti ti-map-pin me-1"></i>위치: ' + (atEnd ? '끝' : (index + 1) + '행 앞') + (leaves.length > 1 ? ' · 분기 구간 (' + leaves.map(function (l) { return esc(l.name); }).join(' / ') + ')' : ' · 공통 구간') + '</div>'
+      + '<div class="row g-2"><div class="col-md-4"><label class="form-label">대분류</label>' + catSelect('category', '', true) + '</div><div class="col-md-8"><label class="form-label">행 이름 <span class="form-label-description">비우면 모듈 이름</span></label><input type="text" class="form-control" name="rowName" autocomplete="off"></div></div>'
+      + (leaves.length > 1 ? '<div class="mt-2"><label class="form-label">어느 분기에</label><select class="form-select" name="target"><option value="__all">모든 분기 (같은 셀을 분기마다)</option>' + leaves.map(function (l) { return '<option value="' + esc(l.id) + '">' + SV.leafLabel(l, f.unitLabel) + ' 에만 (다른 분기는 건너뜀)</option>'; }).join('') + '</select></div>' : '')
+      + '<div class="mt-2">' + moduleBlock(f.domain, preModule) + '</div><div class="mt-2"><label class="form-label">행 메모</label><input type="text" class="form-control" name="note" autocomplete="off"></div>';
+    return dialog({ title: '행 추가', bodyHtml: body, okLabel: '추가', size: 'lg' }).then(function (v) {
+      if (!v) return false;
+      var spec = readModuleSpec(v), cells = {}; cells[v.target && v.target !== '__all' ? v.target : 'all'] = spec;
+      return mutate(function (w) { SH.rowInsert(w, atEnd ? w.rows.length : index, { category: v.category || spec.mod.category, name: v.rowName || spec.label || spec.mod.name, note: v.note, cells: cells }, S.refCell); SH.validate(w, w.unitLabel); });
     });
   }
-  function rerender() { syncFromDom(); var card = $('#flow-form-card'); if (!card) return; var tmp = document.createElement('div'); tmp.innerHTML = flowEditor(state.editFlow); card.replaceWith(tmp.firstElementChild); }
-  function itemParamsDialog(it) {
-    var m = it.kind === 'module' ? modById(it.refId) : null, fl = it.kind === 'flow' ? flowById(it.refId) : null;
-    if (!m && !fl) return Promise.resolve(null);
-    var fields = m ? m.fields : [], d = m ? S.defaults(m.fields) : {};
-    var body = m ? '<div class="text-secondary small mb-2">' + esc(m.name) + ' 의 계획 조건. 모듈 기본값과 다른 값만 이 흐름에 저장됩니다.</div>' + P.inputs(fields, Object.assign({}, d, it.params || {}), { optional: true })
-      : '<div class="text-secondary small mb-2">서브 흐름 "' + esc(fl.name) + '" 안의 모든 스텝에 적용할 조건을 <code>키=값</code> 으로 한 줄에 하나씩 적습니다 (예: <code>stack=Ti 10 nm / Au 50 nm</code>). 해당 키가 있는 스텝에만 반영됩니다.</div><textarea class="form-control" name="raw" rows="4">' + esc(Object.keys(it.params || {}).map(function (k) { return k + '=' + it.params[k]; }).join('\n')) + '</textarea>';
-    return dialog({ title: '계획 조건 · ' + (it.label || (m ? m.name : fl.name)), bodyHtml: body, okLabel: '적용', size: 'lg' }).then(function (v) {
-      if (!v) return null;
-      if (fl) { var params = {}; String(v.raw || '').split(/\r?\n/).forEach(function (line) { var i = line.indexOf('='); if (i > 0) { var k = line.slice(0, i).trim(), val = line.slice(i + 1).trim(); if (k) params[k] = val; } }); it.params = params; return it; }
-      var vals = P.read(fields, v), diff = {};
-      fields.forEach(function (f) { var x = vals[f.key]; if (x === undefined) return; if (f.type === 'check') { if (!!x !== !!d[f.key]) diff[f.key] = !!x; return; } if (String(x) === '') { if (d[f.key] !== undefined) diff[f.key] = ''; return; } if (String(x) !== String(d[f.key] === undefined ? '' : d[f.key])) diff[f.key] = f.type === 'number' && !isNaN(Number(x)) ? Number(x) : x; });
-      it.params = diff; return it;
+  function cellSetDialog(rowId, leafId) {
+    var f = state.editFlow, row = SH.rowById(f, rowId), i = SH.idx(f, rowId), leaf = SH.leavesAt(f, i).filter(function (l) { return l.id === leafId; })[0];
+    return dialog({ title: '이 분기의 셀 채우기', bodyHtml: '<div class="text-secondary small mb-2">' + (i + 1) + '행 "' + esc(row.name) + '" · ' + (leaf ? SV.leafLabel(leaf, f.unitLabel) : '') + '</div>' + moduleBlock(f.domain, ''), okLabel: '넣기', size: 'lg' }).then(function (v) {
+      if (!v) return false; var spec = readModuleSpec(v);
+      return mutate(function (w) { SH.cellSet(w, rowId, leafId, spec, S.refCell); });
     });
   }
-  function copyOf(src, kind) { var cp = JSON.parse(JSON.stringify(src)); delete cp.id; delete cp.createdAt; delete cp.seed; delete cp.ownerId; delete cp.ownerName; delete cp._view; cp.name = src.name + ' (복사)'; if (kind === 'flow') (function reid(items) { items.forEach(function (it) { it.id = uid(); if (it.kind === 'split') it.branches.forEach(function (b) { b.id = uid(); reid(b.items); }); }); })(cp.items); return cp; }
+  function cellParamsDialog(cellId) {
+    var f = state.editFlow, at = SH.findCell(f, cellId); if (!at) return Promise.resolve(false);
+    var c = at.cell, mod = modById(c.moduleId); if (!mod) { toast('모듈을 찾을 수 없습니다.', true); return Promise.resolve(false); }
+    var body = '<div class="text-secondary small mb-2">' + (at.index + 1) + '행 "' + esc(at.row.name) + '"' + (at.leaf.path.length ? ' · <span class="step-group">' + esc(at.leaf.path.join(' › ')) + '</span>' : '') + ' · ' + esc(mod.name) + '. 모듈 기본값과 다른 값만 저장됩니다.</div>'
+      + '<div class="row g-2"><div class="col-md-6"><label class="form-label">표시 이름 <span class="form-label-description">비우면 모듈 이름</span></label><input type="text" class="form-control" name="label" value="' + esc(c.label || '') + '" autocomplete="off"></div><div class="col-md-6"><label class="form-label">메모</label><input type="text" class="form-control" name="note" value="' + esc(c.note || '') + '" autocomplete="off"></div></div>'
+      + '<div class="subheader mt-3 mb-1">계획 조건</div>' + P.inputs(mod.fields, Object.assign({}, S.defaults(mod.fields), c.params || {}), { optional: true });
+    return dialog({ title: '셀 조건 · ' + (c.label || mod.name), bodyHtml: body, okLabel: '적용', size: 'lg' }).then(function (v) {
+      if (!v) return false;
+      return mutate(function (w) { var x = SH.findCell(w, cellId); x.cell.label = v.label; x.cell.note = v.note; x.cell.params = paramsDiff(mod, P.read(mod.fields, v)); });
+    });
+  }
+  function rowEditDialog(rowId) {
+    var f = state.editFlow, row = SH.rowById(f, rowId);
+    var body = '<div class="row g-2"><div class="col-md-4"><label class="form-label required">대분류</label>' + catSelect('category', row.category, false) + '</div><div class="col-md-8"><label class="form-label required">행 이름</label><input type="text" class="form-control" name="name" required value="' + esc(row.name) + '" autocomplete="off"></div></div><div class="mt-2"><label class="form-label">메모</label><input type="text" class="form-control" name="note" value="' + esc(row.note) + '" autocomplete="off"></div>';
+    return dialog({ title: '행 수정 · ' + (SH.idx(f, rowId) + 1) + '. ' + row.name, bodyHtml: body, okLabel: '저장', size: 'md' }).then(function (v) { if (!v) return false; return mutate(function (w) { SH.rowEdit(w, rowId, v); }); });
+  }
+  function splitAddDialog(preRowId) {
+    var f = state.editFlow;
+    return dialog({ title: '분기점 추가', bodyHtml: SV.splitAddBody(f, f.unitLabel, preRowId), okLabel: '분기점 만들기', size: 'md' }).then(function (v) { if (!v) return false; return mutate(function (w) { SH.splitAdd(w, Object.assign({ unitLabel: w.unitLabel }, SV.readSplitAdd(v)), S.cloneRef, S.always); }); });
+  }
+  function splitEditDialog(splitId) {
+    var f = state.editFlow, sp = SH.splitById(f, splitId);
+    return dialog({ title: '분기 수정 · ' + (sp.name || '분기점'), bodyHtml: SV.splitEditBody(f, sp, f.unitLabel), okLabel: '저장', size: 'md' }).then(function (v) { if (!v) return false; return mutate(function (w) { SH.splitEdit(w, splitId, Object.assign({ unitLabel: w.unitLabel }, SV.readSplitEdit(v)), S.cloneRef, S.always, S.always); }); });
+  }
+  function copyOf(src, kind) { var cp = JSON.parse(JSON.stringify(src)); delete cp.id; delete cp.createdAt; delete cp.seed; delete cp.ownerId; delete cp.ownerName; delete cp._view; cp.name = src.name + ' (복사)'; if (kind === 'flow') SH.reid(cp); return cp; }
 
   /* ---------- 이벤트 ---------- */
   function handleError(err) { console.error(err); toast(err && err.message ? err.message : String(err), true); }
@@ -235,10 +248,10 @@
 
   document.addEventListener('input', function (e) {
     if (e.target.id === 'mod-q') { state.q = e.target.value; render(); var q = $('#mod-q'); if (q) { q.focus(); q.setSelectionRange(q.value.length, q.value.length); } return; }
-    if (e.target.closest('#flow-form') && (e.target.name === 'unitCount' || e.target.name === 'unitLabel' || e.target.getAttribute('data-f') === 'bcount' || e.target.getAttribute('data-f') === 'bname')) { syncFromDom(); var pv = $('#flow-preview'); if (pv) pv.innerHTML = previewTable(state.editFlow); }
+    if (e.target.closest('#flow-form') && e.target.name === 'unitCount') { syncFromDom(); rerender(); var inp = $('#flow-form [name="unitCount"]'); if (inp) inp.focus(); }
   });
   document.addEventListener('change', function (e) {
-    if (e.target.closest('#flow-form') && (e.target.name === 'domain' || e.target.name === 'unitLabel')) { rerender(); return; }
+    if (e.target.closest('#flow-form') && (e.target.name === 'domain' || e.target.name === 'unitLabel')) { syncFromDom(); rerender(); return; }
     if (e.target.getAttribute('data-action') === 'mine-only') { state.mineOnly = e.target.checked; state.editModule = null; state.editFlow = null; render(); }
   });
   document.addEventListener('submit', function (e) {
@@ -248,14 +261,13 @@
       var v = readForm(e.target);
       var m = { id: v.modId || undefined, domain: v.domain, name: v.name, category: v.category, equipment: v.equipment, minutes: v.minutes, description: v.description, checklist: v.checklist, fields: P.readFieldRows(e.target) };
       if ('active' in v) m.active = !!v.active;
-      if (state.editModule && state.editModule.createdAt) m.createdAt = state.editModule.createdAt;
       store.saveModule(m).then(function (saved) { toast('모듈 "' + saved.name + '" 을 저장했습니다.'); state.editModule = null; return refresh(); }).catch(handleError);
     }
     if (fid === 'flow-form') {
       e.preventDefault();
       syncFromDom();
       var f = state.editFlow;
-      store.saveFlow({ id: f.id || undefined, domain: f.domain, name: f.name, device: f.device, description: f.description, unitLabel: f.unitLabel, unitCount: f.unitCount, items: f.items, createdAt: f.createdAt })
+      store.saveFlow({ id: f.id || undefined, domain: f.domain, name: f.name, device: f.device, description: f.description, unitLabel: f.unitLabel, unitCount: f.unitCount, rows: f.rows, splits: f.splits })
         .then(function (saved) { toast('흐름 "' + saved.name + '" 을 저장했습니다.'); state.editFlow = null; return refresh(); }).catch(handleError);
     }
   });
@@ -273,20 +285,25 @@
       case 'field-add': { var rows = $('#field-rows'); if (rows) { rows.insertAdjacentHTML('beforeend', P.fieldRowHtml({})); var last = rows.lastElementChild.querySelector('[data-f="label"]'); if (last) last.focus(); } break; }
       case 'field-remove': { var fr = el.closest('[data-row]'); if (fr) fr.remove(); break; }
       case 'field-up': case 'field-down': { var row = el.closest('[data-row]'); if (!row) break; if (action === 'field-up' && row.previousElementSibling) row.parentNode.insertBefore(row, row.previousElementSibling); if (action === 'field-down' && row.nextElementSibling) row.parentNode.insertBefore(row.nextElementSibling, row); break; }
-      case 'flow-new': state.editFlow = { items: [], domain: state.domain || DOMAINS[0].id, unitLabel: '기판', unitCount: 1 }; render(); scrollTo('#flow-form-card'); break;
+      case 'flow-new': state.editFlow = { rows: [], splits: [], domain: state.domain || DOMAINS[0].id, unitLabel: '기판', unitCount: 1 }; render(); scrollTo('#flow-form-card'); break;
       case 'flow-edit': { var fe = flowById(id); if (!fe) break; state.editFlow = JSON.parse(JSON.stringify(fe)); render(); scrollTo('#flow-form-card'); break; }
       case 'flow-view': { var fv = flowById(id); if (!fv) break; state.editFlow = Object.assign(JSON.parse(JSON.stringify(fv)), { _view: true }); render(); scrollTo('#flow-form-card'); break; }
       case 'flow-copy': { var fs = flowById(id); if (!fs) break; state.editFlow = copyOf(fs, 'flow'); render(); scrollTo('#flow-form-card'); toast('복사본을 편집 중입니다. 저장하면 내 흐름이 됩니다.'); break; }
       case 'flow-cancel': state.editFlow = null; render(); break;
-      case 'flow-delete': { var fd = flowById(id); if (!fd) break; var fu = flowUsage(id); if (fu.flows.length) { toast('"' + fu.flows.map(function (x) { return x.name; }).join(', ') + '" 흐름이 이 흐름을 포함하고 있어 삭제할 수 없습니다.', true); break; } confirmDlg({ title: '흐름 삭제', message: '"' + fd.name + '" 흐름을 삭제할까요?' + (fu.runs ? ' 이미 만들어진 런 ' + fu.runs + '개는 그대로 남습니다.' : ''), okLabel: '삭제', danger: true }).then(function (ok) { if (!ok) return; return store.deleteFlow(id).then(function () { toast('삭제했습니다.'); return refresh(); }); }).catch(handleError); break; }
-      case 'item-add-module': { var c = el.getAttribute('data-container'); var sel = $('#am-' + c); if (!sel || !sel.value || !f) break; syncFromDom(); var lst = findList(f.items, c, f.unitCount); if (!lst) break; lst.items.push({ id: uid(), kind: 'module', refId: sel.value, label: '', note: '', params: {} }); rerender(); break; }
-      case 'item-add-flow': { var c2 = el.getAttribute('data-container'); var sf = $('#af-' + c2); if (!sf || !sf.value || !f) break; var sub = flowById(sf.value); if (sub && S.hasSplit(sub.items)) { toast('분기점이 있는 흐름은 서브 흐름으로 넣을 수 없습니다.', true); break; } syncFromDom(); var lst2 = findList(f.items, c2, f.unitCount); if (!lst2) break; lst2.items.push({ id: uid(), kind: 'flow', refId: sf.value, label: '', note: '', params: {} }); rerender(); break; }
-      case 'item-add-split': { var c3 = el.getAttribute('data-container'); if (!f) break; syncFromDom(); var lst3 = findList(f.items, c3, f.unitCount); if (!lst3) break; if (lst3.count < 2) { toast('수량이 1이라 나눌 수 없습니다. 기본 수량을 늘리세요.', true); break; } var half = Math.ceil(lst3.count / 2); lst3.items.push({ id: uid(), kind: 'split', name: '', branches: [{ id: uid(), name: 'A', count: half, items: [] }, { id: uid(), name: 'B', count: lst3.count - half, items: [] }] }); rerender(); break; }
-      case 'item-remove': { if (!f) break; syncFromDom(); var loc = locateItem(f.items, id); if (!loc) break; if (loc.node.kind === 'split' && S.countSteps([loc.node]) > 0) { if (!window.confirm('분기 안의 항목도 함께 빠집니다. 계속할까요?')) break; } loc.list.splice(loc.index, 1); rerender(); break; }
-      case 'item-move': { if (!f) break; syncFromDom(); var lm = locateItem(f.items, id); if (!lm) break; var j = el.getAttribute('data-dir') === 'up' ? lm.index - 1 : lm.index + 1; if (j < 0 || j >= lm.list.length) break; var t = lm.list[lm.index]; lm.list[lm.index] = lm.list[j]; lm.list[j] = t; rerender(); break; }
-      case 'item-params': { if (!f) break; syncFromDom(); var lp = locateItem(f.items, id); if (!lp) break; itemParamsDialog(lp.node).then(function (res) { if (res) rerender(); }).catch(handleError); break; }
-      case 'branch-add': { if (!f) break; syncFromDom(); var ls = locateItem(f.items, id); if (!ls || ls.node.kind !== 'split') break; ls.node.branches.push({ id: uid(), name: String.fromCharCode(65 + ls.node.branches.length), count: 1, items: [] }); rerender(); break; }
-      case 'branch-remove': { if (!f) break; syncFromDom(); var lb = locateItem(f.items, el.getAttribute('data-split')); if (!lb || lb.node.kind !== 'split') break; if (lb.node.branches.length <= 2) { toast('분기는 2개 이상이어야 합니다.', true); break; } var br = lb.node.branches.filter(function (b) { return b.id === id; })[0]; if (br && S.countSteps(br.items) > 0 && !window.confirm('분기 안의 항목도 함께 빠집니다. 계속할까요?')) break; lb.node.branches = lb.node.branches.filter(function (b) { return b.id !== id; }); rerender(); break; }
+      case 'flow-delete': { var fd = flowById(id); if (!fd) break; var fu = flowUsage(id); confirmDlg({ title: '흐름 삭제', message: '"' + fd.name + '" 흐름을 삭제할까요?' + (fu.runs ? ' 이미 만들어진 런 ' + fu.runs + '개는 그대로 남습니다.' : ''), okLabel: '삭제', danger: true }).then(function (ok) { if (!ok) return; return store.deleteFlow(id).then(function () { toast('삭제했습니다.'); return refresh(); }); }).catch(handleError); break; }
+      /* ----- 흐름 편집기 ----- */
+      case 'fe-add-module': { var sel = $('#fe-am'); if (!sel || !sel.value || !f) break; var mod = modById(sel.value); mutate(function (w) { SH.rowInsert(w, w.rows.length, { category: mod ? mod.category : 'etc', name: mod ? mod.name : '', cells: { all: { moduleId: sel.value } } }, S.refCell); }); break; }
+      case 'fe-add-flow': { var sf = $('#fe-af'); if (!sf || !sf.value || !f) break; var sub = flowById(sf.value); if (!sub) break; mutate(function (w) { SH.appendSheet(w, sub, S.refCell, { adopt: !w.rows.length, unitLabel: w.unitLabel }); }); break; }
+      case 'fe-row-insert': { if (!f) break; syncFromDom(); var ix = el.getAttribute('data-index'); var pm = $('#fe-am'); rowInsertDialog(ix === 'end' ? f.rows.length : Number(ix) || 0, ix === 'end' && pm ? pm.value : '').catch(handleError); break; }
+      case 'fe-row-remove': { if (!f) break; mutate(function (w) { SH.rowRemove(w, id, S.always); }); break; }
+      case 'fe-row-move': { if (!f) break; mutate(function (w) { SH.rowMove(w, id, el.getAttribute('data-dir')); }); break; }
+      case 'fe-row-edit': { if (!f) break; syncFromDom(); rowEditDialog(id).catch(handleError); break; }
+      case 'fe-cell-set': { if (!f) break; syncFromDom(); cellSetDialog(el.getAttribute('data-row'), el.getAttribute('data-leaf')).catch(handleError); break; }
+      case 'fe-cell-clear': { if (!f) break; var rid = el.getAttribute('data-row'), lid = el.getAttribute('data-leaf'); mutate(function (w) { SH.cellClear(w, rid, lid, S.always); }); break; }
+      case 'fe-cell-params': { if (!f) break; syncFromDom(); cellParamsDialog(id).catch(handleError); break; }
+      case 'fe-split-add': { if (!f) break; syncFromDom(); if (!f.rows.length) { toast('먼저 행을 추가하세요.', true); break; } splitAddDialog(el.getAttribute('data-row') || null).catch(handleError); break; }
+      case 'fe-split-edit': { if (!f) break; syncFromDom(); splitEditDialog(id).catch(handleError); break; }
+      case 'fe-split-remove': { if (!f) break; mutate(function (w) { SH.splitRemove(w, id, S.always); }); break; }
     }
   });
   window.addEventListener('hashchange', function () { readHash(); state.editModule = null; state.editFlow = null; render(); });

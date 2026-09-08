@@ -1,24 +1,23 @@
 /* =====================================================================
-   DSIL Run Sheet – 홈: 로그인(이름 + PIN) → 내 런만 표시, 새 런 시작(빈 런시트 기본, 라이브러리 흐름 복사는 선택),
-   최근 아카이브(모든 구성원 공개), 내 활동, 관리자 계정 관리
+   DSIL Run Sheet – 홈: 로그인(이름 + PIN) → 내가 만든 런만 표시, 새 런 시작(빈 런시트 기본, 라이브러리 흐름 복사는 선택),
+   내 완료·중단(아카이브 올리기), 최근 아카이브(모든 구성원 공개), 관리자 계정 관리
    ===================================================================== */
 (function () {
   'use strict';
 
   var CFG = window.DSIL_CONFIG || {};
-  var U = window.DSILUI, S = window.DSILStore;
+  var U = window.DSILUI, S = window.DSILStore, SH = window.DSILSheet;
   var esc = U.esc, fmtDate = U.fmtDate, fmtDateTime = U.fmtDateTime, localDate = U.localDate, $ = U.$, toast = U.toast, dialog = U.dialog, promptDlg = U.promptDlg, confirmDlg = U.confirmDlg, empty = U.empty, stat = U.stat, toLocalInput = U.toLocalInput, readForm = U.readForm;
   var store = S.create(CFG);
   var DOMAINS = CFG.domains || [{ id: 'device', label: '반도체 소자 공정', short: '소자' }, { id: 'package', label: '패키징 공정', short: '패키징' }];
   var PRESETS = [['7', '최근 7일'], ['30', '최근 30일'], ['90', '최근 90일'], ['year', '올해'], ['all', '전체']];
   var UNITS = CFG.unitLabels || ['기판', '웨이퍼', '샘플', '칩'];
-  var state = { ready: false, error: null, session: null, runs: [], archive: [], flows: [], modules: [], logs: [], accounts: [], filter: { domain: '', preset: '90' }, next: null, autoNew: null };
+  var state = { ready: false, error: null, session: null, runs: [], archive: [], flows: [], modules: [], accounts: [], filter: { domain: '', preset: '90' }, next: null, autoNew: null };
   (function () { try { var q = new URLSearchParams(window.location.search); state.next = q.get('next'); state.autoNew = q.get('new'); } catch (e) { /* ignore */ } })();
 
   function me() { return store.getMe(); }
   function domainInfo(id) { return DOMAINS.filter(function (d) { return d.id === id; })[0] || { id: id, label: id || '-', short: id || '-' }; }
   function domainBadge(id) { var d = domainInfo(id); return '<span class="badge ' + (id === 'package' ? 'bg-indigo-lt' : 'bg-blue-lt') + '">' + esc(d.short) + '</span>'; }
-  function runById(id) { return state.runs.concat(state.archive).filter(function (r) { return r.id === id; })[0] || null; }
   function rangeFrom(preset) {
     var now = new Date();
     if (preset === 'all') return null;
@@ -35,9 +34,9 @@
 
   function reload() {
     state.session = store.getSession();
-    if (!state.session) { state.runs = []; state.archive = []; state.logs = []; state.accounts = []; return Promise.all([store.listFlows(), store.listModules()]).then(function (r) { state.flows = r[0]; state.modules = r[1]; }); }
-    return Promise.all([store.listRuns({ scope: 'mine' }), store.listRuns({ scope: 'archive' }), store.listFlows(), store.listModules(), store.listLogs(null, 3000, 'mine'), state.session.isAdmin ? store.listAccounts() : Promise.resolve([])])
-      .then(function (r) { state.runs = r[0]; state.archive = r[1]; state.flows = r[2]; state.modules = r[3]; state.logs = r[4]; state.accounts = r[5]; });
+    if (!state.session) { state.runs = []; state.archive = []; state.accounts = []; return Promise.all([store.listFlows(), store.listModules()]).then(function (r) { state.flows = r[0]; state.modules = r[1]; }); }
+    return Promise.all([store.listRuns({ scope: 'mine' }), store.listRuns({ scope: 'archive' }), store.listFlows(), store.listModules(), state.session.isAdmin ? store.listAccounts() : Promise.resolve([])])
+      .then(function (r) { state.runs = r[0]; state.archive = r[1]; state.flows = r[2]; state.modules = r[3]; state.accounts = r[4]; });
   }
 
   /* ---------- 상단 · 로그인 ---------- */
@@ -87,37 +86,35 @@
 
   /* ---------- 홈 ---------- */
   function runCard(r) {
-    var pg = S.progress(r), cur = pg.current;
-    var last = state.logs.filter(function (l) { return l.runId === r.id; })[0];
+    var pg = S.progress(r), cur = pg.current, st = SH.stats(r);
     return '<div class="col-md-6 col-xl-4"><div class="card run-card h-100"><div class="card-body d-flex flex-column">'
       + '<div class="d-flex justify-content-between align-items-start gap-2"><div><div class="text-secondary small tnum">' + esc(r.code) + ' ' + domainBadge(r.domain) + (r.sample ? ' · <b>' + esc(r.sample) + '</b>' : '') + '</div><h3 class="run-title mb-1"><a href="run/index.html#id=' + esc(r.id) + '" class="text-reset">' + esc(r.title) + '</a></h3>'
-      + '<div class="text-secondary small">' + esc(r.team) + ' · ' + esc(r.unitLabel) + ' ' + r.unitCount + ' · ' + fmtDate(r.startedAt) + '</div></div>'
+      + '<div class="text-secondary small">' + esc(r.team) + ' · ' + esc(r.unitLabel) + ' ' + r.unitCount + ' · ' + st.rows + '행' + (st.splits ? ' · 분기 ' + st.splits : '') + ' · ' + fmtDate(r.startedAt) + '</div></div>'
       + '<span class="badge ' + (r.status === 'paused' ? 'bg-secondary-lt' : 'bg-blue-lt') + '">' + esc(S.RUN_STATUS[r.status] || r.status) + '</span></div>'
       + '<div class="mt-3"><div class="d-flex justify-content-between small mb-1"><span>' + pg.finished + ' / ' + pg.total + ' 스텝</span><span class="tnum">' + pg.pct + '%</span></div>'
       + '<div class="progress progress-sm"><div class="progress-bar" style="width:' + Math.round(pg.done / (pg.total || 1) * 100) + '%"></div><div class="progress-bar bg-secondary" style="width:' + Math.round(pg.skipped / (pg.total || 1) * 100) + '%"></div><div class="progress-bar bg-red" style="width:' + Math.round(pg.failed / (pg.total || 1) * 100) + '%"></div></div></div>'
-      + (!pg.total ? '<div class="mt-3 alert alert-warning py-2 px-3 mb-0 small"><i class="ti ti-pencil-plus me-1"></i>아직 스텝이 없습니다. 런시트에서 라이브러리 모듈·흐름을 넣으세요.</div>'
-        : cur ? '<div class="mt-3 current-step"><div class="text-secondary small">다음 스텝' + (cur.branchPath && cur.branchPath.length ? ' · <span class="step-group">' + esc(cur.branchPath.join(' › ')) + '</span>' : '') + '</div><div class="d-flex align-items-center gap-2"><span class="step-num">' + cur.seq + '</span><div><div class="fw-medium">' + esc(cur.name) + '</div><div class="small text-secondary">' + esc(cur.equipment || '') + '</div></div></div></div>'
+      + (!pg.total ? '<div class="mt-3 alert alert-warning py-2 px-3 mb-0 small"><i class="ti ti-pencil-plus me-1"></i>아직 행(스텝)이 없습니다. 런시트에서 라이브러리 모듈·흐름을 넣으세요.</div>'
+        : cur ? '<div class="mt-3 current-step"><div class="text-secondary small">다음 스텝' + (cur.leaf.path.length ? ' · <span class="step-group">' + esc(cur.leaf.path.join(' › ')) + '</span>' : '') + '</div><div class="d-flex align-items-center gap-2"><span class="step-num">' + (SH.idx(r, cur.row.id) + 1) + '</span><div><div class="fw-medium">' + esc(cur.row.name) + (cur.cell.name !== cur.row.name ? ' <span class="text-secondary">› ' + esc(cur.cell.name) + '</span>' : '') + '</div><div class="small text-secondary">' + esc(cur.cell.equipment || '') + '</div></div></div></div>'
           : '<div class="mt-3 alert alert-success py-2 px-3 mb-0 small"><i class="ti ti-check me-1"></i>모든 스텝이 끝났습니다. 런시트에서 완료 처리하세요.</div>')
-      + (last ? '<div class="small text-secondary mt-2"><i class="ti ti-history me-1"></i>' + fmtDateTime(last.at) + ' · ' + esc(S.ACTIONS[last.action] || last.action) + (last.stepName ? ' · ' + esc(last.stepName) : '') + '</div>' : '')
+      + '<div class="small text-secondary mt-2"><i class="ti ti-clock me-1"></i>최근 변경 ' + fmtDateTime(r.updatedAt) + '</div>'
       + '<div class="mt-auto pt-3 d-flex gap-2"><a href="run/index.html#id=' + esc(r.id) + (!pg.total ? '&edit=1' : '') + '" class="btn btn-outline-primary"><i class="ti ti-clipboard-list me-1"></i>런시트</a>'
-      + (cur ? '<a href="run/index.html#id=' + esc(r.id) + '&step=' + esc(cur.id) + '" class="btn btn-primary"><i class="ti ti-pencil me-1"></i>' + cur.seq + '. 기록</a>' : (pg.total ? '<a href="run/index.html#id=' + esc(r.id) + '" class="btn btn-success"><i class="ti ti-flag-check me-1"></i>런 완료</a>' : ''))
+      + (cur ? '<a href="run/index.html#id=' + esc(r.id) + '&step=' + esc(cur.cell.id) + '" class="btn btn-primary"><i class="ti ti-pencil me-1"></i>' + (SH.idx(r, cur.row.id) + 1) + '. 기록</a>' : (pg.total ? '<a href="run/index.html#id=' + esc(r.id) + '" class="btn btn-success"><i class="ti ti-flag-check me-1"></i>런 완료</a>' : ''))
       + '</div></div></div></div>';
   }
-  function actionCls(a) { return a.indexOf('sheet-') === 0 ? 'bg-purple-lt' : a === 'step-done' ? 'bg-green-lt' : a === 'step-fail' ? 'bg-red-lt' : a === 'step-skip' ? 'bg-secondary-lt' : a.indexOf('run-') === 0 ? 'bg-blue-lt' : 'bg-cyan-lt'; }
   function renderHome() {
     var m = me(), f = state.filter, from = rangeFrom(f.preset);
     var runs = state.runs.filter(function (r) { return !f.domain || r.domain === f.domain; });
     var active = runs.filter(function (r) { return r.status === 'active' || r.status === 'paused'; });
     var finished = runs.filter(function (r) { return (r.status === 'done' || r.status === 'aborted') && (!from || localDate(r.endedAt || r.updatedAt) >= from); });
-    var logs = state.logs.filter(function (l) { var r = runById(l.runId); return (!f.domain || (r && r.domain === f.domain)) && (!from || (l.date || localDate(l.at)) >= from); });
     var archive = state.archive.filter(function (r) { return !f.domain || r.domain === f.domain; });
+    var myFlows = state.flows.filter(function (x) { return x.ownerId === m.id; }).length;
     var html = '<div class="card mb-3"><div class="card-body py-2"><form id="home-filter" class="row g-2 align-items-end">'
-      + '<div class="col-12 col-md-4"><div class="h3 mb-0">' + esc(m.name) + ' 님의 런시트</div><div class="text-secondary small">' + esc(m.team || '팀 미지정') + ' · 내가 만든 런만 보입니다</div></div>'
+      + '<div class="col-12 col-md-4"><div class="h3 mb-0">' + esc(m.name) + ' 님의 런시트</div><div class="text-secondary small">' + esc(m.team || '팀 미지정') + ' · ' + esc(m.name) + ' 이 만든 런만 보입니다</div></div>'
       + '<div class="col-6 col-md-2"><label class="form-label mb-1">분류</label><select class="form-select form-select-sm" name="domain"><option value="">전체</option>' + DOMAINS.map(function (d) { return '<option value="' + d.id + '"' + (f.domain === d.id ? ' selected' : '') + '>' + esc(d.label) + '</option>'; }).join('') + '</select></div>'
       + '<div class="col-6 col-md-2"><label class="form-label mb-1">기간</label><select class="form-select form-select-sm" name="preset">' + PRESETS.map(function (p) { return '<option value="' + p[0] + '"' + (f.preset === p[0] ? ' selected' : '') + '>' + p[1] + '</option>'; }).join('') + '</select></div>'
       + '<div class="col-12 col-md-4 d-flex justify-content-md-end gap-2"><a href="history/index.html" class="btn btn-sm"><i class="ti ti-history me-1"></i>이력</a><a href="library/index.html" class="btn btn-sm"><i class="ti ti-books me-1"></i>라이브러리</a><button type="button" class="btn btn-sm btn-primary" data-action="new-run"><i class="ti ti-player-play me-1"></i>새 런 시작</button></div>'
       + '</form></div></div>';
-    html += '<div class="row g-3 mb-3">' + stat('내 진행 중인 런', active.length + '개', '', '', 'col-6 col-lg-3') + stat('기간 내 내 완료·중단', finished.length + '개', '', '', 'col-6 col-lg-3') + stat('기간 내 내 기록', logs.length + '건', '', '', 'col-6 col-lg-3') + stat('아카이브 (전체)', state.archive.length + '개', '모든 구성원 공개', '', 'col-6 col-lg-3') + '</div>';
+    html += '<div class="row g-3 mb-3">' + stat('내 진행 중인 런', active.length + '개', '', '', 'col-6 col-lg-3') + stat('기간 내 내 완료·중단', finished.length + '개', '', '', 'col-6 col-lg-3') + stat('내 라이브러리 흐름', myFlows + '개', '기본 제공 ' + state.flows.filter(function (x) { return x.seed; }).length + '개 별도', '', 'col-6 col-lg-3') + stat('아카이브 (전체)', state.archive.length + '개', '모든 구성원 공개', '', 'col-6 col-lg-3') + '</div>';
     if (!active.length) html += '<div class="card mb-4">' + empty('player-play', '진행 중인 런이 없습니다', '"새 런 시작"으로 빈 런시트를 만들고 라이브러리에서 모듈·흐름을 넣거나, 라이브러리 흐름을 복사해 시작하세요.') + '</div>';
     else html += '<div class="row g-3 mb-4">' + active.map(runCard).join('') + '</div>';
     html += '<div class="row g-3"><div class="col-lg-6"><div class="card h-100"><div class="card-header"><h3 class="card-title"><i class="ti ti-flag-check me-1 text-primary"></i>내 완료 · 중단</h3><div class="card-actions"><a href="run/index.html" class="btn btn-sm">내 런 전체 <i class="ti ti-chevron-right ms-1"></i></a></div></div>';
@@ -128,10 +125,6 @@
     if (!archive.length) html += '<div class="card-body text-secondary small">아직 아카이브에 올라온 런이 없습니다. 런을 완료할 때 "아카이브에 올릴까요?"에 동의하면 여기 보입니다.</div>';
     else html += '<div class="table-responsive"><table class="table table-vcenter card-table"><thead><tr><th>런</th><th>팀 · 담당</th><th class="w-1">스텝</th><th class="w-1">올린 날</th></tr></thead><tbody>' + archive.slice(0, 10).map(function (r) { var pg = S.progress(r); return '<tr><td><a href="run/index.html#id=' + esc(r.id) + '">' + esc(r.title) + '</a><span class="sub">' + esc(r.code) + ' ' + domainBadge(r.domain) + (r.sample ? ' · ' + esc(r.sample) : '') + '</span></td><td class="small">' + esc(r.team) + '<br>' + esc(r.owner) + '</td><td class="text-nowrap tnum">' + pg.done + '/' + pg.total + '</td><td class="text-nowrap text-secondary small">' + fmtDate(r.archivedAt) + '</td></tr>'; }).join('') + '</tbody></table></div>';
     html += '</div></div></div>';
-    html += '<div class="card mt-3"><div class="card-header"><h3 class="card-title"><i class="ti ti-history me-1 text-primary"></i>내 최근 활동</h3><div class="card-actions"><a href="history/index.html" class="btn btn-sm">팀·이름·일자별 보기 <i class="ti ti-chevron-right ms-1"></i></a></div></div>';
-    if (!logs.length) html += '<div class="card-body text-secondary small">기간 안에 기록이 없습니다.</div>';
-    else html += '<div class="table-responsive" style="max-height:400px;overflow:auto"><table class="table table-sm table-vcenter card-table"><tbody>' + logs.slice(0, CFG.recentLogs || 20).map(function (l) { var r = runById(l.runId); return '<tr><td class="text-nowrap text-secondary small">' + fmtDateTime(l.at) + '</td><td class="small"><span class="badge ' + actionCls(l.action) + ' me-1">' + esc(S.ACTIONS[l.action] || l.action) + '</span>' + (r ? '<a href="run/index.html#id=' + esc(r.id) + '">' + esc(r.code) + '</a> ' : '') + (l.stepName ? '<b>' + (l.seq ? l.seq + '. ' : '') + esc(l.stepName) + '</b>' + (l.branch ? ' <span class="step-group">' + esc(l.branch) + '</span>' : '') + ' ' : '') + '<span class="text-secondary">' + esc(l.who ? l.who + ' · ' : '') + esc(l.detail.slice(0, 110)) + '</span></td></tr>'; }).join('') + '</tbody></table></div>';
-    html += '</div>';
     if (m.isAdmin) {
       html += '<div class="card mt-3"><div class="card-header"><h3 class="card-title"><i class="ti ti-users me-1 text-primary"></i>계정 <span class="text-secondary fw-normal">' + state.accounts.length + '개 · 관리자</span></h3></div><div class="table-responsive"><table class="table table-vcenter card-table"><thead><tr><th>이름</th><th>팀</th><th class="w-1">권한</th><th class="w-1"></th></tr></thead><tbody>'
         + state.accounts.map(function (a) { return '<tr><td class="fw-medium">' + esc(a.name) + '</td><td>' + esc(a.team || '-') + '</td><td>' + (a.role === 'admin' ? '<span class="badge bg-primary text-white">관리자</span>' : '<span class="badge bg-secondary-lt">구성원</span>') + '</td><td class="text-end text-nowrap"><button type="button" class="btn btn-sm btn-ghost-secondary btn-icon" data-action="acct-team" data-id="' + esc(a.id) + '" title="팀 지정"><i class="ti ti-users"></i></button><button type="button" class="btn btn-sm btn-ghost-secondary btn-icon" data-action="acct-pin" data-id="' + esc(a.id) + '" title="PIN 재설정"><i class="ti ti-key"></i></button></td></tr>'; }).join('') + '</tbody></table></div></div>';
@@ -151,22 +144,20 @@
     return '<select class="form-select" name="unitLabel">' + UNITS.map(function (u) { return '<option value="' + esc(u) + '"' + (u === value ? ' selected' : '') + '>' + esc(u) + '</option>'; }).join('') + '<option value="__custom"' + (custom ? ' selected' : '') + '>직접 입력…</option></select>'
       + '<div data-show-if="unitLabel=__custom" class="mt-1"><input type="text" class="form-control" name="unitLabelCustom" placeholder="단위 이름" value="' + esc(custom ? value : '') + '" autocomplete="off"></div>';
   }
-  function splitInputs(items, unitLabel) {
-    var html = '';
-    (items || []).forEach(function (it) {
-      if (it.kind !== 'split') return;
-      html += '<div class="split-inputs mt-2"><div class="d-flex align-items-center gap-2 mb-1"><span class="badge bg-purple text-white">분기점</span><input type="text" class="form-control form-control-sm" name="s_' + esc(it.id) + '" value="' + esc(it.name || '') + '" placeholder="분기점 이름" style="max-width:14rem"></div>'
-        + '<div class="row g-2">' + it.branches.map(function (b) { return '<div class="col-6 col-md-4"><div class="input-group input-group-sm"><input type="text" class="form-control" name="b_' + esc(b.id) + '_name" value="' + esc(b.name) + '" placeholder="분기 이름"><input type="number" class="form-control" name="b_' + esc(b.id) + '_count" value="' + b.count + '" min="1" style="max-width:5rem"><span class="input-group-text">' + esc(unitLabel) + '</span></div>' + (S.hasSplit(b.items) ? '<div class="ms-2 border-start ps-2">' + splitInputs(b.items, unitLabel) + '</div>' : '') + '</div>'; }).join('') + '</div></div>';
-    });
-    return html;
+  function splitInputs(f) {
+    return (f.splits || []).map(function (s) {
+      var r = SH.range(f, s), parent = s.parentId === 'all' ? '공통' : (SH.branchOf(f, s.parentId) || { branch: { name: '?' } }).branch.name + ' 안';
+      return '<div class="split-inputs mt-2"><div class="d-flex align-items-center gap-2 mb-1 flex-wrap"><span class="badge bg-purple text-white">분기점</span><input type="text" class="form-control form-control-sm" name="s_' + esc(s.id) + '" value="' + esc(s.name || '') + '" placeholder="분기점 이름" style="max-width:14rem"><span class="small text-secondary">' + (r.from + 1) + '~' + (s.toRowId ? (r.to + 1) : '끝') + '행 · ' + esc(parent) + '</span></div>'
+        + '<div class="row g-2">' + s.branches.map(function (b) { return '<div class="col-6 col-md-4"><div class="input-group input-group-sm"><input type="text" class="form-control" name="b_' + esc(b.id) + '_name" value="' + esc(b.name) + '" placeholder="분기 이름"><input type="number" class="form-control" name="b_' + esc(b.id) + '_count" value="' + b.count + '" min="1" style="max-width:5rem"><span class="input-group-text">' + esc(f.unitLabel) + '</span></div></div>'; }).join('') + '</div></div>';
+    }).join('');
   }
   function flowBlock(dom, f) {
-    var key = 'flowId_' + dom + '=' + (f ? f.id : '__empty');
-    return '<div data-show-if="' + esc(key) + '">' + (f ? '<div class="text-secondary small mt-1">' + esc(f.description || '') + (f.device ? ' · ' + esc(f.device) : '') + ' · 항목 ' + f.items.length + '개' + (f.seed ? ' · 기본 제공' : (f.ownerName ? ' · ' + esc(f.ownerName) : '')) + '</div>' : '<div class="text-secondary small mt-1">빈 런시트로 시작합니다. 런시트 화면의 <b>라이브러리에서 추가</b>로 모듈을 하나씩 넣거나 흐름을 통째로 복사한 뒤 자유롭게 고칩니다.</div>')
+    var key = 'flowId_' + dom + '=' + (f ? f.id : '__empty'), st = f ? SH.stats(f) : null;
+    return '<div data-show-if="' + esc(key) + '">' + (f ? '<div class="text-secondary small mt-1">' + esc(f.description || '') + (f.device ? ' · ' + esc(f.device) : '') + ' · ' + st.rows + '행 ' + st.cells + '스텝' + (st.splits ? ' · 분기점 ' + st.splits + '개' : '') + (f.seed ? ' · 기본 제공' : (f.ownerName ? ' · ' + esc(f.ownerName) : '')) + '</div>' : '<div class="text-secondary small mt-1">빈 런시트로 시작합니다. 런시트 화면의 <b>라이브러리에서 추가</b>로 모듈을 행으로 넣거나 흐름을 통째로 복사한 뒤 자유롭게 고칩니다.</div>')
       + '<div class="row g-2 mt-1"><div class="col-6 col-md-3"><label class="form-label">단위</label>' + unitSelect(f ? f.unitLabel : UNITS[0]) + '</div>'
       + '<div class="col-6 col-md-3"><label class="form-label required">수량</label><input type="number" class="form-control" name="unitCount" min="1" required value="' + (f ? f.unitCount : 1) + '"></div>'
       + '<div class="col-md-6"><label class="form-label">기판 · 재료</label><input type="text" class="form-control" name="substrate" placeholder="SiO2 285 nm / p++ Si" autocomplete="off"></div></div>'
-      + (f && S.hasSplit(f.items) ? '<div class="form-hint mt-2">분기 수량의 합은 나눌 수량과 같아야 합니다. 이름·수량을 여기서 조정할 수 있습니다.</div>' + splitInputs(f.items, f.unitLabel) : '') + '</div>';
+      + (f && (f.splits || []).length ? '<div class="form-hint mt-2">분기 수량의 합은 나눌 수량과 같아야 합니다. 이름·수량을 여기서 조정할 수 있습니다.</div>' + splitInputs(f) : '') + '</div>';
   }
   function newRunDialog(preFlowId) {
     var m = me(), flows = state.flows.filter(function (f) { return f.active !== false; });
@@ -177,7 +168,7 @@
       + '<div class="mt-3"><label class="form-label required">공정 분류</label><div class="form-selectgroup">' + DOMAINS.map(function (d) { return '<label class="form-selectgroup-item"><input type="radio" name="domain" value="' + d.id + '" class="form-selectgroup-input"' + (preDomain === d.id ? ' checked' : '') + '><span class="form-selectgroup-label"><i class="ti ti-' + (d.icon || 'cpu') + ' me-1"></i>' + esc(d.label) + '</span></label>'; }).join('') + '</div></div>'
       + DOMAINS.map(function (d) {
         var fl = flows.filter(function (f) { return f.domain === d.id; });
-        return '<div data-show-if="domain=' + d.id + '"><div class="mt-2"><label class="form-label">시작 방법</label><select class="form-select" name="flowId_' + d.id + '"><option value="__empty"' + (preFlowId && fl.some(function (f) { return f.id === preFlowId; }) ? '' : ' selected') + '>빈 런시트로 시작 (라이브러리에서 직접 구성)</option>' + fl.map(function (f) { return '<option value="' + esc(f.id) + '"' + (f.id === preFlowId ? ' selected' : '') + '>라이브러리 흐름 복사: ' + esc(f.name) + (f.device ? ' — ' + esc(f.device) : '') + (S.hasSplit(f.items) ? ' [분기]' : '') + '</option>'; }).join('') + '</select></div>'
+        return '<div data-show-if="domain=' + d.id + '"><div class="mt-2"><label class="form-label">시작 방법</label><select class="form-select" name="flowId_' + d.id + '"><option value="__empty"' + (preFlowId && fl.some(function (f) { return f.id === preFlowId; }) ? '' : ' selected') + '>빈 런시트로 시작 (라이브러리에서 직접 구성)</option>' + fl.map(function (f) { return '<option value="' + esc(f.id) + '"' + (f.id === preFlowId ? ' selected' : '') + '>라이브러리 흐름 복사: ' + esc(f.name) + (f.device ? ' — ' + esc(f.device) : '') + ((f.splits || []).length ? ' [분기]' : '') + '</option>'; }).join('') + '</select></div>'
           + flowBlock(d.id, null) + fl.map(function (f) { return flowBlock(d.id, f); }).join('') + '</div>';
       }).join('')
       + '<div class="row g-2 mt-2"><div class="col-md-8"><label class="form-label">목표 · 메모</label><input type="text" class="form-control" name="goal" placeholder="이번 런의 목적, 비교 대상" autocomplete="off"></div><div class="col-md-4"><label class="form-label">시작일</label><input type="datetime-local" class="form-control" name="startedAt" value="' + toLocalInput() + '"></div></div>';
@@ -196,7 +187,7 @@
   function refresh() { return reload().then(render).catch(handleError); }
   function goNext() { if (state.next && /^[a-z]+$/.test(state.next)) { window.location.replace(state.next + '/index.html'); return true; } return false; }
   function startNew(pre) {
-    newRunDialog(pre).then(function (run) { if (run) { toast('런 ' + run.code + ' 을 만들었습니다.'); window.location.href = 'run/index.html#id=' + run.id + (run.steps.length ? '' : '&edit=1'); } }).catch(handleError);
+    newRunDialog(pre).then(function (run) { if (run) { toast('런 ' + run.code + ' 을 만들었습니다.'); window.location.href = 'run/index.html#id=' + run.id + (run.rows.length ? '' : '&edit=1'); } }).catch(handleError);
   }
 
   document.addEventListener('submit', function (e) {

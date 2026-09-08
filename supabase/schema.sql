@@ -65,6 +65,9 @@ create table if not exists public.flows (
 alter table public.flows add column if not exists domain text not null default 'device';
 alter table public.flows add column if not exists unit_label text not null default '기판';
 alter table public.flows add column if not exists unit_count integer not null default 1;
+-- v3: rows(JSON: [{id, category, name, note, cells:{all|branchId: {moduleId, params, label}}}]) + splits(JSON: [{id, name, parentId, fromRowId, toRowId, branches:[{id,name,count}]}])
+alter table public.flows add column if not exists rows jsonb not null default '[]'::jsonb;
+alter table public.flows add column if not exists splits jsonb not null default '[]'::jsonb;
 
 create table if not exists public.runs (
   id           text primary key,
@@ -99,6 +102,9 @@ alter table public.runs add column if not exists tree jsonb not null default '[]
 alter table public.runs add column if not exists owner_id text;
 alter table public.runs add column if not exists archived boolean not null default false;
 alter table public.runs add column if not exists archived_at timestamptz;
+-- v3: rows(JSON: [{id, category, name, note, cells:{all|branchId: Step}}]) + splits(JSON). tree/steps 는 옛 형식(앱이 읽을 때 자동 변환)
+alter table public.runs add column if not exists rows jsonb;
+alter table public.runs add column if not exists splits jsonb not null default '[]'::jsonb;
 create index if not exists runs_owner_idx on public.runs (owner_id, updated_at desc);
 create index if not exists runs_archived_idx on public.runs (archived, archived_at desc);
 -- 라이브러리 소유·잠금: seed = 기본 제공(수정·삭제 불가), owner_id = 만든 계정
@@ -129,6 +135,7 @@ create table if not exists public.run_logs (
 alter table public.run_logs add column if not exists branch text not null default '';
 alter table public.run_logs add column if not exists team text not null default '';
 alter table public.run_logs add column if not exists date date;
+alter table public.run_logs add column if not exists row_id text;
 create index if not exists run_logs_run_idx on public.run_logs (run_id, created_at desc);
 create index if not exists run_logs_created_idx on public.run_logs (created_at desc);
 create index if not exists run_logs_team_idx on public.run_logs (team, who, date);
