@@ -65,6 +65,8 @@ html { color-scheme: light; }
 .split-table th.step-col { width: 13rem; text-align: left; font-size: 0.75rem; background: #e5ecf6; color: #004191; padding: 0.35rem 0.55rem; }
 .split-table td.cell-rowhead { background: #f8fafc; border-right: 2px solid #d5dde8; width: 13rem; }
 .split-table td.cell-rowhead .row-name { line-height: 1.25; }
+.split-table td.cell-rowhead .btn-icon { width: 1.5rem; height: 1.5rem; min-width: 0; padding: 0; }
+.split-table td.cell-rowhead .d-flex.gap-1 { gap: 0.15rem !important; }
 .split-table tr.row-split-head td { background: #fcf7fe; }
 .split-table td.cell-split-label { background: #f3e8f8; color: #6b2d86; font-size: 0.85rem; }
 .split-table td.cell-skip { background: repeating-linear-gradient(135deg, #fafafa, #fafafa 6px, #f2f2f2 6px, #f2f2f2 12px); color: var(--tblr-secondary); font-size: 0.8rem; }
