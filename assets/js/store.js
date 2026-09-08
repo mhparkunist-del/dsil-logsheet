@@ -240,13 +240,22 @@
   }
   function opRowInsert(run, ctx, o, me) {
     var index = (o.index === undefined || o.index === null || o.index === '' || o.index === 'end') ? run.rows.length : Number(o.index);
+    /* 공통 행으로 끝에 추가: 끝까지 열린 분기점은 앞 행에서 합침 */
+    var closed = (o.common && index >= run.rows.length) ? SH.closeOpenSplits(run) : [];
     var row = SH.rowInsert(run, index, { category: o.category, name: o.name, note: o.note, cells: o.cells || {} }, runCellMaker(ctx));
     if (!Object.keys(row.cells).length && !o.allowEmpty) { SH.rowRemove(run, row.id, always); fail('행에 넣을 모듈을 고르세요.'); }
     try { SH.validate(run, run.unitLabel); } catch (e) { SH.rowRemove(run, row.id, always); throw e; }
     if (!row.name) row.name = '(이름 없음)';
     var i = SH.idx(run, row.id); run.updatedAt = nowISO();
     var names = Object.keys(row.cells).map(function (k) { return row.cells[k].name; });
-    return [logRec(run, { row: row }, me, 'sheet-insert', (i + 1) + '행 "' + row.name + '" 추가' + (names.length ? ' · ' + (Object.keys(row.cells).length > 1 ? Object.keys(row.cells).length + '개 분기에 ' : '') + names[0] : ' (모듈 없음)'))];
+    return [logRec(run, { row: row }, me, 'sheet-insert', (i + 1) + '행 "' + row.name + '" 추가' + (names.length ? ' · ' + (Object.keys(row.cells).length > 1 ? Object.keys(row.cells).length + '개 분기에 ' : '') + names[0] : ' (모듈 없음)') + splitClosedText(closed, i))];
+  }
+  function splitClosedText(closed, i) { return closed.length ? ' · 분기점 ' + closed.map(function (s) { return '"' + (s.name || '분기점') + '"'; }).join(', ') + ' 은 ' + i + '행에서 끝나고 ' + (i + 1) + '행부터 공통' : ''; }
+  function opSplitClose(run, rowId, me) {
+    var row = SH.rowById(run, rowId); if (!row) fail('행을 찾을 수 없습니다.');
+    var list = SH.splitCloseAt(run, rowId, cloneStep, pendingStep, pendingStep, run.unitLabel); run.updatedAt = nowISO();
+    var i = SH.idx(run, rowId);
+    return [logRec(run, { row: row }, me, 'sheet-split-edit', '분기점 ' + list.map(function (s) { return '"' + (s.name || '분기점') + '"'; }).join(', ') + ' 을 ' + i + '행에서 끝냄 → ' + (i + 1) + '행 "' + row.name + '" 부터 공통(합침)')];
   }
   function opRowRemove(run, rowId, me) {
     var i = SH.idx(run, rowId), row = SH.rowById(run, rowId); if (!row) fail('행을 찾을 수 없습니다.');
@@ -297,11 +306,12 @@
   function opCopyFlow(run, ctx, flowId, me) {
     var fl = byId(ctx.flows, flowId); if (!fl) fail('흐름을 찾을 수 없습니다.');
     var logs = [], empty = !run.rows.length, beforeCount = run.unitCount;
+    var closed = SH.closeOpenSplits(run);
     var added = SH.appendSheet(run, fl, runCellMaker(ctx), { adopt: empty, unitLabel: run.unitLabel });
     if (run.unitCount !== beforeCount) { run.units = makeUnits(run.unitLabel, run.unitCount, run.units); logs.push(logRec(run, null, me, 'run-edit', '수량: ' + beforeCount + ' → ' + run.unitCount + ' (흐름 "' + fl.name + '" 복사)')); }
     if (!run.flowId) { run.flowId = fl.id; run.flowName = fl.name; }
     run.updatedAt = nowISO();
-    logs.push(logRec(run, null, me, 'sheet-copy', '흐름 "' + fl.name + '" 복사: ' + added.length + '행' + ((fl.splits || []).length ? ' · 분기점 ' + fl.splits.length + '개' : '')));
+    logs.push(logRec(run, null, me, 'sheet-copy', '흐름 "' + fl.name + '" 복사: ' + added.length + '행' + ((fl.splits || []).length ? ' · 분기점 ' + fl.splits.length + '개' : '') + splitClosedText(closed, run.rows.length - added.length)));
     return logs;
   }
   function opRunEdit(run, patch, me) {
@@ -604,6 +614,7 @@
       splitAdd: function (runId, o) { return wrap(function () { return mutate(runId, function (w) { return opSplitAdd(w, o || {}, me()); }); }); },
       splitEdit: function (runId, splitId, patch) { return wrap(function () { return mutate(runId, function (w) { return opSplitEdit(w, splitId, patch || {}, me()); }); }); },
       splitRemove: function (runId, splitId) { return wrap(function () { return mutate(runId, function (w) { return opSplitRemove(w, splitId, me()); }); }); },
+      splitClose: function (runId, rowId) { return wrap(function () { return mutate(runId, function (w) { return opSplitClose(w, rowId, me()); }); }); },
       copyFlow: function (runId, flowId) { return wrap(function () { return mutate(runId, function (w) { return opCopyFlow(w, ctx(), flowId, me()); }); }); },
 
       listLogs: function (runId, limit, scope) {
@@ -722,6 +733,7 @@
       splitAdd: function (runId, o) { return mutate(runId, function (run) { return opSplitAdd(run, o || {}, me()); }); },
       splitEdit: function (runId, splitId, patch) { return mutate(runId, function (run) { return opSplitEdit(run, splitId, patch || {}, me()); }); },
       splitRemove: function (runId, splitId) { return mutate(runId, function (run) { return opSplitRemove(run, splitId, me()); }); },
+      splitClose: function (runId, rowId) { return mutate(runId, function (run) { return opSplitClose(run, rowId, me()); }); },
       copyFlow: function (runId, flowId) { return mutateCtx(runId, function (run, c) { return opCopyFlow(run, c, flowId, me()); }); },
 
       listLogs: function (runId, limit, scope) { var m = me(); if (!m) return Promise.resolve([]); return this.listRuns({ scope: runId ? 'all' : (scope || 'mine') }).then(function (runs) { var ids = {}; runs.forEach(function (r) { if (!runId || r.id === runId) ids[r.id] = 1; }); var q = client.from('run_logs').select('*'); if (runId) q = q.eq('run_id', runId); return q.order('created_at', { ascending: false }).limit(limit || 5000).then(unwrap).then(function (rows) { return rows.map(toLog).filter(function (l) { return runId ? true : ids[l.runId]; }); }); }); },

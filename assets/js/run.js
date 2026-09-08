@@ -96,7 +96,7 @@
     return 'pending';
   }
   function rowHeadHtml(row, i, leaves) {
-    var r = state.run, edit = editing();
+    var r = state.run, edit = editing(), canClose = edit && canCloseAt(r, i);
     var html = '<div class="d-flex gap-2 align-items-start"><span class="step-num is-' + rowStatus(row, leaves) + '">' + (i + 1) + '</span><div class="flex-fill min-w-0"><div class="fw-bold row-name">' + esc(row.name || '(이름 없음)') + '</div><div>' + P.catBadge(row.category) + '</div>' + (row.note ? '<div class="small text-secondary"><i class="ti ti-note"></i> ' + esc(row.note) + '</div>' : '') + '</div></div>';
     if (edit) {
       html += '<div class="d-flex flex-wrap gap-1 mt-2">'
@@ -105,10 +105,13 @@
         + '<button type="button" class="btn btn-sm btn-ghost-secondary btn-icon" data-action="row-move" data-id="' + esc(row.id) + '" data-dir="down" title="아래로"' + (i === r.rows.length - 1 ? ' disabled' : '') + '><i class="ti ti-chevron-down"></i></button>'
         + '<button type="button" class="btn btn-sm btn-ghost-primary btn-icon" data-action="row-edit" data-id="' + esc(row.id) + '" title="대분류·행 이름·메모"><i class="ti ti-pencil"></i></button>'
         + '<button type="button" class="btn btn-sm btn-ghost-secondary btn-icon text-purple" data-action="split-add" data-row="' + esc(row.id) + '" title="이 행부터 분기점"' + (r.unitCount < 2 ? ' disabled' : '') + '><i class="ti ti-git-branch"></i></button>'
+        + (canClose ? '<button type="button" class="btn btn-sm btn-ghost-secondary btn-icon text-primary" data-action="split-close" data-row="' + esc(row.id) + '" title="이 행부터 공통 (앞 행에서 분기 합침)"><i class="ti ti-arrows-join"></i></button>' : '')
         + '<button type="button" class="btn btn-sm btn-ghost-danger btn-icon" data-action="row-remove" data-id="' + esc(row.id) + '" title="행 삭제"><i class="ti ti-x"></i></button></div>';
     }
     return html;
   }
+  /* i 행에 걸쳐 있으면서 그 앞에서 시작한 분기점이 있으면 "이 행부터 공통" 가능 */
+  function canCloseAt(sheet, i) { return (sheet.splits || []).some(function (s) { var rg = SH.range(sheet, s); return rg.from < i && i <= rg.to; }); }
   function stepCellHtml(s, leaf, row, i, pg) {
     var r = state.run, active = r.status === 'active' && !ro(), isCur = !!(pg.current && pg.current.cell.id === s.id), edit = editing();
     var hasActual = Object.keys(s.actual || {}).length > 0;
@@ -154,8 +157,8 @@
     var flows = state.flows.filter(function (f) { return f.active !== false; });
     var fo = flows.filter(function (f) { return f.domain === dom; }).concat(flows.filter(function (f) { return f.domain !== dom; }));
     var flowOpts = fo.map(function (f) { var st = SH.stats(f); return '<option value="' + esc(f.id) + '">' + (f.domain !== dom ? '[' + esc(domainInfo(f.domain).short) + '] ' : '') + esc(f.name) + ' (' + st.rows + '행' + (st.splits ? ' · 분기 ' + st.splits + ' · ' + esc(f.unitLabel) + ' ' + f.unitCount : '') + ')' + (f.seed ? ' · 기본 제공' : f.ownerName ? ' · ' + esc(f.ownerName) : '') + '</option>'; }).join('');
-    return '<div class="card mb-3 border-purple"><div class="card-body"><div class="d-flex align-items-center flex-wrap gap-2 mb-2"><i class="ti ti-books text-purple"></i><b>라이브러리에서 추가</b><span class="text-secondary small">모듈은 <b>행(큰 스텝)</b>으로 끝에 붙고, 분기 구간이면 모든 분기에 같은 셀이 들어갑니다. 흐름 복사는 행·분기점을 그대로 가져오며 빈 런이면 수량도 흐름에 맞춥니다. 특정 위치는 행의 <i class="ti ti-row-insert-top"></i> 버튼, 분기별 다른 조건은 셀의 <i class="ti ti-adjustments"></i> 버튼으로 고칩니다.</span></div>'
-      + '<div class="row g-2"><div class="col-lg-6"><label class="form-label">모듈 <span class="form-label-description">끝에 행 추가</span></label><div class="input-group"><select class="form-select" id="pal-module">' + modOpts + '</select><button type="button" class="btn btn-primary" data-action="pal-module"><i class="ti ti-plus me-1"></i>행 추가</button><button type="button" class="btn" data-action="pal-module-detail" title="대분류·이름·계획 조건·분기 지정 후 추가"><i class="ti ti-adjustments"></i></button></div></div>'
+    return '<div class="card mb-3 border-purple"><div class="card-body"><div class="d-flex align-items-center flex-wrap gap-2 mb-2"><i class="ti ti-books text-purple"></i><b>라이브러리에서 추가</b><span class="text-secondary small">모듈은 <b>공통 행(큰 스텝)</b>으로 끝에 붙습니다. 끝까지 열린 분기점이 있으면 그 앞 행에서 합쳐집니다(분기마다 따로 넣으려면 <i class="ti ti-adjustments"></i> 상세 추가에서 "모든 분기"). 흐름 복사는 행·분기점을 그대로 가져오며 빈 런이면 수량도 흐름에 맞춥니다. 분기점은 행의 <i class="ti ti-git-branch"></i>, 합침은 행의 <i class="ti ti-arrows-join"></i> 버튼.</span></div>'
+      + '<div class="row g-2"><div class="col-lg-6"><label class="form-label">모듈 <span class="form-label-description">끝에 공통 행 추가</span></label><div class="input-group"><select class="form-select" id="pal-module">' + modOpts + '</select><button type="button" class="btn btn-primary" data-action="pal-module"><i class="ti ti-plus me-1"></i>행 추가</button><button type="button" class="btn" data-action="pal-module-detail" title="대분류·이름·계획 조건·분기 지정 후 추가"><i class="ti ti-adjustments"></i></button></div></div>'
       + '<div class="col-lg-6"><label class="form-label">흐름 통째로 복사 <span class="form-label-description">라이브러리 런시트 템플릿</span></label><div class="input-group"><select class="form-select" id="pal-flow"' + (flowOpts ? '' : ' disabled') + '>' + (flowOpts || '<option value="">흐름 없음</option>') + '</select><button type="button" class="btn" data-action="pal-flow"' + (flowOpts ? '' : ' disabled') + '><i class="ti ti-copy me-1"></i>복사</button></div></div></div></div></div>';
   }
   function renderSheet() {
@@ -266,14 +269,12 @@
       + '<div class="mt-3"><div class="subheader mb-1">사진 <span class="text-secondary fw-normal">OM 이미지, 소자 사진 (최대 ' + PH.maxPerStep + '장)</span></div><div class="photo-strip" id="photo-strip">' + (s.photos || []).map(function (k) { return thumbHtml(k); }).join('') + '</div><input type="hidden" name="photos" value="' + esc((s.photos || []).join(',')) + '">' + (readOnly ? '' : '<label class="btn btn-sm mt-2 mb-0"><i class="ti ti-camera me-1"></i>사진 추가<input type="file" id="photo-input" accept="image/*" multiple hidden></label>') + '</div>'
       + '<div class="subheader mt-3 mb-1">이 스텝의 상태</div><div class="form-selectgroup">' + [['done', '완료', 'circle-check', 'green'], ['skipped', '건너뜀', 'player-skip-forward', 'secondary'], ['failed', '실패', 'alert-triangle', 'red'], ['pending', '대기', 'clock', 'secondary']].map(function (o) { return '<label class="form-selectgroup-item"><input type="radio" name="status" value="' + o[0] + '" class="form-selectgroup-input"' + (st === o[0] ? ' checked' : '') + '><span class="form-selectgroup-label"><i class="ti ti-' + o[2] + ' text-' + o[3] + ' me-1"></i>' + o[1] + '</span></label>'; }).join('') + '</div>'
       + '<div class="form-hint" data-show-if="status=skipped">건너뛴 이유를 특이사항에 적어 주세요.</div><div class="form-hint" data-show-if="status=failed">실패 원인·조치를 특이사항에 적어 주세요. 재작업은 시트 편집에서 행을 추가합니다.</div></fieldset>';
-    var p = dialog({ title: '스텝 기록 · ' + seq + '. ' + s.name, bodyHtml: body, okLabel: readOnly ? '닫기' : '저장', size: 'lg', hideCancel: readOnly });
-    loadThumbs();
-    return p.then(function (v) {
-      state.dialogStep = null;
-      if (!v || readOnly) return null;
+    var p = dialog({ title: '스텝 기록 · ' + seq + '. ' + s.name, bodyHtml: body, okLabel: readOnly ? '닫기' : '저장', size: 'lg', hideCancel: readOnly, submit: readOnly ? null : function (v) {
       var photos = v.photos ? v.photos.split(',').filter(Boolean) : [];
       return store.stepLog(state.run.id, s.id, { status: v.status, operator: v.operator, team: v.team, date: v.date, actual: P.read(s.fields, v), result: v.result, issues: v.issues, note: v.note, photos: photos }, { name: v.operator, team: v.team });
-    });
+    } });
+    loadThumbs();
+    return p.then(function (v) { state.dialogStep = null; if (!v || readOnly) return null; return v; });
   }
   function moduleOptions(domain, showAll) {
     var mods = state.modules.filter(function (m) { return m.active !== false && (showAll || m.domain === domain); });
@@ -298,26 +299,24 @@
     var leaves = SH.leavesIfInserted(r, index);
     var body = '<div class="text-secondary small mb-2"><i class="ti ti-map-pin me-1"></i>위치: ' + (atEnd ? '끝' : (index + 1) + '행 앞') + (leaves.length > 1 ? ' · 분기 구간 (' + leaves.map(function (l) { return esc(l.name); }).join(' / ') + ')' : ' · 공통 구간') + '</div>'
       + '<div class="row g-2"><div class="col-md-4"><label class="form-label">대분류</label>' + catSelect('category', '', true) + '</div><div class="col-md-8"><label class="form-label">행 이름 <span class="form-label-description">비우면 스텝 이름</span></label><input type="text" class="form-control" name="rowName" autocomplete="off" placeholder="예: 소스/드레인 형성"></div></div>'
-      + (leaves.length > 1 ? '<div class="mt-2"><label class="form-label">어느 분기에 넣을까요</label><select class="form-select" name="target"><option value="__all">모든 분기 (같은 셀을 분기마다 복사, 나중에 따로 고칠 수 있음)</option>' + leaves.map(function (l) { return '<option value="' + esc(l.id) + '">' + SV.leafLabel(l, r.unitLabel) + ' 에만 (다른 분기는 이 행을 건너뜀)</option>'; }).join('') + '</select></div>' : '')
+      + (leaves.length > 1 ? '<div class="mt-2"><label class="form-label">어느 분기에 넣을까요</label><select class="form-select" name="target">' + (atEnd ? '<option value="__common">공통 행 — 열린 분기점을 이 행 앞에서 합치고 여기서부터 다시 공통</option>' : '') + '<option value="__all">모든 분기 (같은 셀을 분기마다 복사, 나중에 따로 고칠 수 있음)</option>' + leaves.map(function (l) { return '<option value="' + esc(l.id) + '">' + SV.leafLabel(l, r.unitLabel) + ' 에만 (다른 분기는 이 행을 건너뜀)</option>'; }).join('') + '</select></div>' : '')
       + '<div class="mt-2">' + moduleBlock(r.domain, preModule) + '</div>'
       + '<div class="mt-2"><label class="form-label">행 메모 <span class="form-label-description">지시·주의, 추가한 이유</span></label><input type="text" class="form-control" name="note" autocomplete="off"></div>';
-    return dialog({ title: '런시트에 행(스텝) 추가', bodyHtml: body, okLabel: '추가', size: 'lg' }).then(function (v) {
-      if (!v) return null;
+    return dialog({ title: '런시트에 행(스텝) 추가', bodyHtml: body, okLabel: '추가', size: 'lg', submit: function (v) {
       var spec = readModuleSpec(v), cells = {};
       if (!spec.mod) throw new Error('모듈을 고르세요.');
-      cells[v.target && v.target !== '__all' ? v.target : 'all'] = { moduleId: spec.moduleId, name: spec.name, params: spec.params };
-      return store.rowInsert(r.id, { index: atEnd ? 'end' : index, category: v.category || spec.mod.category, name: v.rowName, note: v.note, cells: cells });
-    });
+      cells[v.target && v.target !== '__all' && v.target !== '__common' ? v.target : 'all'] = { moduleId: spec.moduleId, name: spec.name, params: spec.params };
+      return store.rowInsert(r.id, { index: atEnd ? 'end' : index, common: !v.target || v.target === '__common', category: v.category || spec.mod.category, name: v.rowName, note: v.note, cells: cells });
+    } });
   }
   function cellSetDialog(rowId, leafId) {
     var r = state.run, row = SH.rowById(r, rowId), i = SH.idx(r, rowId);
     var leaf = SH.leavesAt(r, i).filter(function (l) { return l.id === leafId; })[0];
     var body = '<div class="text-secondary small mb-2"><i class="ti ti-map-pin me-1"></i>' + (i + 1) + '행 "' + esc(row.name) + '" · ' + (leaf ? SV.leafLabel(leaf, r.unitLabel) : '') + '</div>' + moduleBlock(r.domain, '');
-    return dialog({ title: '이 분기의 셀 채우기', bodyHtml: body, okLabel: '넣기', size: 'lg' }).then(function (v) {
-      if (!v) return null;
+    return dialog({ title: '이 분기의 셀 채우기', bodyHtml: body, okLabel: '넣기', size: 'lg', submit: function (v) {
       var spec = readModuleSpec(v); if (!spec.mod) throw new Error('모듈을 고르세요.');
       return store.cellSet(r.id, rowId, leafId, { moduleId: spec.moduleId, name: spec.name, params: spec.params });
-    });
+    } });
   }
   function cellEditDialog(at) {
     var s = at.cell;
@@ -326,20 +325,20 @@
       + '<div class="col-md-4"><label class="form-label">장비</label><input type="text" class="form-control" name="equipment" value="' + esc(s.equipment) + '" autocomplete="off"></div></div>'
       + '<div class="subheader mt-3 mb-1">계획 조건</div>' + P.inputs(s.fields, s.planned, { optional: true })
       + (S.TERMINAL[s.status] ? '<div class="form-hint mt-2">이미 끝난 스텝입니다. 계획 조건을 바꿔도 실제 기록은 그대로이며 변경 이력에 남습니다.</div>' : '');
-    return dialog({ title: '계획 수정 · ' + (at.index + 1) + '. ' + s.name, bodyHtml: body, okLabel: '저장', size: 'lg' }).then(function (v) { if (!v) return null; return store.cellEdit(state.run.id, s.id, { name: v.name, equipment: v.equipment, planned: P.read(s.fields, v) }); });
+    return dialog({ title: '계획 수정 · ' + (at.index + 1) + '. ' + s.name, bodyHtml: body, okLabel: '저장', size: 'lg', submit: function (v) { return store.cellEdit(state.run.id, s.id, { name: v.name, equipment: v.equipment, planned: P.read(s.fields, v) }); } });
   }
   function rowEditDialog(row) {
     var body = '<div class="row g-2"><div class="col-md-4"><label class="form-label required">대분류</label>' + catSelect('category', row.category, false) + '</div><div class="col-md-8"><label class="form-label required">행 이름</label><input type="text" class="form-control" name="name" required value="' + esc(row.name) + '" autocomplete="off"></div></div>'
       + '<div class="mt-2"><label class="form-label">메모 <span class="form-label-description">시트에 표시되는 지시·주의</span></label><input type="text" class="form-control" name="note" value="' + esc(row.note) + '" autocomplete="off"></div>';
-    return dialog({ title: '행 수정 · ' + (SH.idx(state.run, row.id) + 1) + '. ' + row.name, bodyHtml: body, okLabel: '저장', size: 'md' }).then(function (v) { if (!v) return null; return store.rowEdit(state.run.id, row.id, { category: v.category, name: v.name, note: v.note }); });
+    return dialog({ title: '행 수정 · ' + (SH.idx(state.run, row.id) + 1) + '. ' + row.name, bodyHtml: body, okLabel: '저장', size: 'md', submit: function (v) { return store.rowEdit(state.run.id, row.id, { category: v.category, name: v.name, note: v.note }); } });
   }
   function splitAddDialog(preRowId) {
     var r = state.run;
-    return dialog({ title: '분기점 추가', bodyHtml: SV.splitAddBody(r, r.unitLabel, preRowId), okLabel: '분기점 만들기', size: 'md' }).then(function (v) { if (!v) return null; return store.splitAdd(r.id, SV.readSplitAdd(v)); });
+    return dialog({ title: '분기점 추가', bodyHtml: SV.splitAddBody(r, r.unitLabel, preRowId), okLabel: '분기점 만들기', size: 'md', submit: function (v) { return store.splitAdd(r.id, SV.readSplitAdd(v)); } });
   }
   function splitEditDialog(split) {
     var r = state.run;
-    return dialog({ title: '분기 수정 · ' + (split.name || '분기점'), bodyHtml: SV.splitEditBody(r, split, r.unitLabel), okLabel: '저장', size: 'md' }).then(function (v) { if (!v) return null; return store.splitEdit(r.id, split.id, SV.readSplitEdit(v)); });
+    return dialog({ title: '분기 수정 · ' + (split.name || '분기점'), bodyHtml: SV.splitEditBody(r, split, r.unitLabel), okLabel: '저장', size: 'md', submit: function (v) { return store.splitEdit(r.id, split.id, SV.readSplitEdit(v)); } });
   }
   function runEditDialog(r) {
     var units = CFG.unitLabels || [], custom = units.indexOf(r.unitLabel) < 0;
@@ -350,12 +349,11 @@
       + '<div class="col-md-7"><label class="form-label">' + esc(r.unitLabel) + ' 이름 (' + r.unitCount + '개, 쉼표 구분)</label><input type="text" class="form-control" name="units" value="' + esc(r.units.join(', ')) + '" autocomplete="off"></div></div>'
       + '<div class="mt-2"><label class="form-label">기판 · 재료</label><input type="text" class="form-control" name="substrate" value="' + esc(r.substrate) + '" autocomplete="off"></div>'
       + '<div class="mt-2"><label class="form-label">목표 · 메모</label><textarea class="form-control" name="goal" rows="2">' + esc(r.goal) + '</textarea></div><div class="mt-2"><label class="form-label">비고</label><input type="text" class="form-control" name="note" value="' + esc(r.note) + '" autocomplete="off"></div>';
-    return dialog({ title: '런 정보 수정', bodyHtml: body, okLabel: '저장', size: 'lg' }).then(function (v) {
-      if (!v) return null;
+    return dialog({ title: '런 정보 수정', bodyHtml: body, okLabel: '저장', size: 'lg', submit: function (v) {
       var patch = { title: v.title, startedAt: v.startedAt ? fromLocalInput(v.startedAt) : undefined, team: v.team, owner: v.owner, sample: v.sample, unitLabel: v.unitLabel === '__custom' ? v.unitLabelCustom : v.unitLabel, substrate: v.substrate, goal: v.goal, note: v.note };
       if (v.unitCount !== undefined && Number(v.unitCount) !== r.unitCount) patch.unitCount = v.unitCount; else patch.units = v.units;
       return store.updateRun(r.id, patch);
-    });
+    } });
   }
   function moreDialog(r) {
     var active = r.status === 'active', finished = r.status === 'done' || r.status === 'aborted', owner = !!r.isOwner, editable = !ro();
@@ -375,14 +373,14 @@
     var body = '<div class="mb-2"><label class="form-label required">새 런 제목</label><input type="text" class="form-control" name="title" required value="' + esc(r.title) + '" autocomplete="off"></div>'
       + '<div class="row g-2"><div class="col-6"><label class="form-label">시료 / 로트</label><input type="text" class="form-control" name="sample" autocomplete="off"></div><div class="col-6"><label class="form-label">팀</label><input type="text" class="form-control" name="team" value="' + esc(m.team || r.team) + '" autocomplete="off"></div></div>'
       + '<label class="form-check mt-3"><input class="form-check-input" type="checkbox" name="fromActual" checked><span class="form-check-label">완료된 스텝의 <b>실제 조건</b>을 새 런의 계획 조건으로</span></label><div class="form-hint">새 런은 내 런으로 만들어지고 담당자는 ' + esc(m.name) + ' 입니다.</div>';
-    return dialog({ title: '런 복제', bodyHtml: body, okLabel: '복제', size: 'md' }).then(function (v) { if (!v) return null; return store.cloneRun(r.id, { title: v.title, sample: v.sample, team: v.team, fromActual: !!v.fromActual }); });
+    return dialog({ title: '런 복제', bodyHtml: body, okLabel: '복제', size: 'md', submit: function (v) { return store.cloneRun(r.id, { title: v.title, sample: v.sample, team: v.team, fromActual: !!v.fromActual }); } });
   }
   function toFlowDialog(r) {
     var body = '<div class="mb-2"><label class="form-label required">흐름 이름</label><input type="text" class="form-control" name="name" required value="' + esc(r.title) + '" autocomplete="off"></div>'
       + '<div class="row g-2"><div class="col-6"><label class="form-label">소자 종류</label><input type="text" class="form-control" name="device" autocomplete="off"></div><div class="col-6"><label class="form-label">설명</label><input type="text" class="form-control" name="description" value="런 ' + esc(r.code) + ' 에서 저장" autocomplete="off"></div></div>'
       + '<label class="form-check mt-3"><input class="form-check-input" type="checkbox" name="fromActual" checked><span class="form-check-label">완료된 스텝의 실제 조건을 흐름의 계획 조건으로</span></label><label class="form-check"><input class="form-check-input" type="checkbox" name="dropSkipped" checked><span class="form-check-label">건너뛴 스텝은 빼기</span></label>'
       + '<div class="form-hint mt-2">행·분기점·수량(' + esc(r.unitLabel) + ' ' + r.unitCount + ')도 함께 저장됩니다. 라이브러리에서 내 흐름으로 보이고 나만 고칠 수 있습니다.</div>';
-    return dialog({ title: '이 런을 공정 흐름으로 저장', bodyHtml: body, okLabel: '흐름 저장', size: 'md' }).then(function (v) { if (!v) return null; return store.saveRunAsFlow(r.id, { name: v.name, device: v.device, description: v.description, fromActual: !!v.fromActual, dropSkipped: !!v.dropSkipped }); });
+    return dialog({ title: '이 런을 공정 흐름으로 저장', bodyHtml: body, okLabel: '흐름 저장', size: 'md', submit: function (v) { return store.saveRunAsFlow(r.id, { name: v.name, device: v.device, description: v.description, fromActual: !!v.fromActual, dropSkipped: !!v.dropSkipped }); } });
   }
   function archivePrompt() {
     return confirmDlg({ title: '아카이브에 올릴까요?', message: '아카이브에 올리면 모든 구성원이 이 런시트를 볼 수 있습니다(읽기 전용). 올리지 않으면 나만 볼 수 있고, 나중에 더 보기에서 올릴 수 있습니다.', okLabel: '아카이브에 올리기' })
@@ -409,8 +407,8 @@
     ensureTeam().then(function (m) {
       if (!m) return;
       if (kind === 'flow') return store.copyFlow(r.id, sel.value).then(function (run) { toast('흐름을 복사했습니다.' + (run.unitCount !== r.unitCount ? ' 수량을 ' + run.unitCount + '로 맞췄습니다.' : '')); return refresh(); });
-      var mod = modById(sel.value);
-      return store.rowInsert(r.id, { index: 'end', category: mod ? mod.category : '', cells: { all: { moduleId: sel.value } } }).then(function () { toast('행을 추가했습니다.'); return refresh(); });
+      var mod = modById(sel.value), hadOpen = SH.openSplits(r).length > 0;
+      return store.rowInsert(r.id, { index: 'end', common: true, category: mod ? mod.category : '', cells: { all: { moduleId: sel.value } } }).then(function () { toast('공통 행을 추가했습니다.' + (hadOpen ? ' 열린 분기점은 앞 행에서 합쳤습니다.' : '')); return refresh(); });
     }).catch(handleError);
   }
 
@@ -457,6 +455,7 @@
       case 'cell-set': { var rid2 = el.getAttribute('data-row'), lid2 = el.getAttribute('data-leaf'); ensureTeam().then(function (m) { if (!m) return; return cellSetDialog(rid2, lid2).then(done('셀을 채웠습니다.')); }).catch(handleError); break; }
       case 'split-add': ensureTeam().then(function (m) { if (!m) return; return splitAddDialog(el.getAttribute('data-row') || null).then(done('분기점을 추가했습니다. 분기마다 셀을 고치거나 비워서 건너뛰게 하세요.')); }).catch(handleError); break;
       case 'split-edit': { var sp = SH.splitById(r, id); if (!sp) break; splitEditDialog(sp).then(done('분기를 수정했습니다.')).catch(handleError); break; }
+      case 'split-close': { var rc = SH.rowById(r, el.getAttribute('data-row')); if (!rc) break; var ic = SH.idx(r, rc.id); confirmDlg({ title: '이 행부터 공통', message: (ic + 1) + '. ' + rc.name + ' 행부터 다시 공통 행이 됩니다. 이 행에 걸친 분기점은 ' + ic + '행에서 끝나고, 이 행부터의 분기 셀은 첫 분기의 셀 하나로 합쳐집니다.', okLabel: '합치기' }).then(function (ok) { if (!ok) return; return store.splitClose(r.id, rc.id).then(function () { toast((ic + 1) + '행부터 공통으로 합쳤습니다.'); return refresh(); }); }).catch(handleError); break; }
       case 'split-remove': confirmDlg({ title: '분기점 삭제', message: '이 분기점을 지우면 범위 안 행의 분기 셀이 하나로 합쳐집니다(첫 분기의 셀만 남음). 진행된 스텝이 여럿이면 지울 수 없습니다.', okLabel: '삭제', danger: true }).then(function (ok) { if (!ok) return; return store.splitRemove(r.id, id).then(function () { toast('분기점을 지웠습니다.'); return refresh(); }); }).catch(handleError); break;
       case 'log-filter': state.logFilter = el.getAttribute('data-filter'); render(); break;
       case 'csv': exportCSV(); break;

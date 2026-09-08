@@ -30,7 +30,8 @@
     if (from < 0) from = 0; if (to < 0) to = sheet.rows.length - 1; if (to < from) to = from;
     return { from: from, to: to };
   }
-  function activeAt(sheet, i, excludeId) { return (sheet.splits || []).filter(function (s) { if (s.id === excludeId) return false; var r = range(sheet, s); return r.from <= i && i <= r.to; }).sort(function (a, b) { return depthOf(sheet, a) - depthOf(sheet, b); }); }
+  /* i 행에 걸친 분기점(얕은 것부터). exclude 는 분기점 id 또는 제외 판정 함수 */
+  function activeAt(sheet, i, exclude) { return (sheet.splits || []).filter(function (s) { if (typeof exclude === 'function' ? exclude(s) : s.id === exclude) return false; var r = range(sheet, s); return r.from <= i && i <= r.to; }).sort(function (a, b) { return depthOf(sheet, a) - depthOf(sheet, b); }); }
   /* i 행의 열 분할(잎 목록, 기판 순서) */
   function leavesAt(sheet, i, excludeId) {
     var leaves = [{ id: 'all', name: '', count: sheet.unitCount, start: 0, path: [], depth: 0, splitId: null }];
@@ -79,7 +80,9 @@
     sheet.rows.forEach(function (row, i) {
       var leaves = leavesAt(sheet, i);
       (sheet.splits || []).filter(function (s) { return range(sheet, s).from === i; }).sort(function (a, b) { return depthOf(sheet, a) - depthOf(sheet, b); }).forEach(function (s) {
-        out.push({ type: 'split-head', split: s, index: i, cells: leaves.map(function (l) { return l.splitId === s.id ? { type: 'branch-head', start: l.start, count: l.count, leaf: l, split: s } : { type: 'empty', start: l.start, count: l.count, leaf: l }; }) });
+        /* 머리 행은 이 분기점보다 깊은(안쪽) 분기점을 빼고 나눈 열 분할로 그림 → 같은 행에서 시작하는 안쪽 분기점이 있어도 상위 분기 이름이 보임 */
+        var d = depthOf(sheet, s), lv = leavesAt(sheet, i, function (x) { return depthOf(sheet, x) > d; });
+        out.push({ type: 'split-head', split: s, index: i, cells: lv.map(function (l) { return l.splitId === s.id ? { type: 'branch-head', start: l.start, count: l.count, leaf: l, split: s } : { type: 'empty', start: l.start, count: l.count, leaf: l }; }) });
       });
       out.push({ type: 'row', row: row, index: i, leaves: leaves, cells: leaves.map(function (l) { var c = row.cells ? row.cells[l.id] : null; return { type: c ? 'step' : 'skip', start: l.start, count: l.count, leaf: l, cell: c || null, row: row }; }) });
       (sheet.splits || []).filter(function (s) { return s.toRowId && range(sheet, s).to === i && i < sheet.rows.length - 1; }).sort(function (a, b) { return depthOf(sheet, b) - depthOf(sheet, a); }).forEach(function (s) {
@@ -273,6 +276,23 @@
     (sheet.splits || []).forEach(function (s) { s.fromRowId = rowMap[s.fromRowId] || s.fromRowId; s.toRowId = s.toRowId ? (rowMap[s.toRowId] || s.toRowId) : null; });
     return sheet;
   }
+  /* 끝까지 열려 있는 분기점을 마지막 행에서 닫음 (그 뒤에 붙는 행은 공통). 닫은 분기점 목록 반환 */
+  function closeOpenSplits(sheet) {
+    var last = sheet.rows[sheet.rows.length - 1]; if (!last) return [];
+    var closed = [];
+    (sheet.splits || []).forEach(function (s) { if (!s.toRowId) { s.toRowId = last.id; closed.push(s); } });
+    return closed;
+  }
+  /* i 행부터 공통으로: i 행에 걸쳐 있으면서 그 앞에서 시작한 분기점들의 끝 행을 i-1 행으로 (안쪽 분기점부터). 닫은 분기점 목록 반환 */
+  function splitCloseAt(sheet, rowId, cloneCell, canSplit, canRemove, unitLabel) {
+    var i = idx(sheet, rowId); if (i < 0) fail('행을 찾을 수 없습니다.');
+    if (i < 1) fail('첫 행에서는 합칠 수 없습니다. 분기점을 삭제하세요.');
+    var prev = sheet.rows[i - 1].id;
+    var list = (sheet.splits || []).filter(function (s) { var r = range(sheet, s); return r.from < i && i <= r.to; }).sort(function (a, b) { return depthOf(sheet, b) - depthOf(sheet, a); });
+    if (!list.length) fail('이 행에 걸쳐 있는 분기점이 없습니다.');
+    list.forEach(function (s) { splitEdit(sheet, s.id, { toRowId: prev, unitLabel: unitLabel }, cloneCell, canSplit, canRemove); });
+    return list;
+  }
   /* 행을 index 에 넣었을 때 그 행이 갖게 될 잎 목록 (미리보기용, 시트는 바꾸지 않음) */
   function leavesIfInserted(sheet, index) {
     var tmp = clone(sheet); var row = rowInsert(tmp, index, { name: '_' }, function () { return null; });
@@ -306,5 +326,5 @@
   }
 
   window.DSILSheet = { uid: uid, clone: clone, idx: idx, rowById: rowById, splitById: splitById, branchOf: branchOf, depthOf: depthOf, range: range, leavesAt: leavesAt, leafIds: leafIds, openSplits: openSplits, validate: validate, stats: stats, layout: layout,
-    rowInsert: rowInsert, rowRemove: rowRemove, rowMove: rowMove, rowEdit: rowEdit, cellSet: cellSet, cellClear: cellClear, splitAdd: splitAdd, splitEdit: splitEdit, splitRemove: splitRemove, appendSheet: appendSheet, eachCell: eachCell, findCell: findCell, reid: reid, leavesIfInserted: leavesIfInserted, fromTree: fromTree };
+    rowInsert: rowInsert, rowRemove: rowRemove, rowMove: rowMove, rowEdit: rowEdit, cellSet: cellSet, cellClear: cellClear, splitAdd: splitAdd, splitEdit: splitEdit, splitRemove: splitRemove, appendSheet: appendSheet, eachCell: eachCell, findCell: findCell, reid: reid, leavesIfInserted: leavesIfInserted, closeOpenSplits: closeOpenSplits, splitCloseAt: splitCloseAt, fromTree: fromTree };
 })();

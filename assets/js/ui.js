@@ -121,9 +121,19 @@
         resolve(val);
       }
       openDialogs.push(close);
+      /* opts.submit(values) 가 있으면 성공(resolve)할 때만 닫고, 실패하면 오류를 창 안에 보여 주고 입력을 유지 */
       function ok() {
-        if (form) { if (!form.reportValidity()) return; close(readForm(form)); return; }
-        close(input ? input.value : true);
+        if (form && !form.reportValidity()) return;
+        var val = form ? readForm(form) : (input ? input.value : true);
+        if (!opts.submit) { close(val); return; }
+        var okBtn = wrap.querySelector('[data-modal="ok"]'), body = wrap.querySelector('.modal-body'), old = wrap.querySelector('.modal-error');
+        if (old) old.remove();
+        okBtn.disabled = true;
+        Promise.resolve().then(function () { return opts.submit(val); }).then(function (res) { close(res === undefined ? val : res); }, function (err) {
+          okBtn.disabled = false;
+          body.insertAdjacentHTML('afterbegin', '<div class="alert alert-danger py-2 px-3 modal-error" role="alert"><i class="ti ti-alert-circle me-1"></i>' + esc(err && err.message ? err.message : String(err)) + '</div>');
+          body.scrollTop = 0;
+        });
       }
       function onKey(e) {
         if (e.key === 'Escape') close(null);

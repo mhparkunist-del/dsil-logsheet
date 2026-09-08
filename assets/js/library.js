@@ -128,7 +128,7 @@
     return SV.table(f, { unitLabel: f.unitLabel, tableClass: 'table table-bordered split-table sheet-editor',
       rowHead: function (row, i) {
         var html = '<div class="d-flex gap-2 align-items-start"><span class="step-num">' + (i + 1) + '</span><div class="flex-fill min-w-0"><div class="fw-bold row-name">' + esc(row.name || '(이름 없음)') + '</div><div>' + P.catBadge(row.category) + '</div>' + (row.note ? '<div class="small text-secondary"><i class="ti ti-note"></i> ' + esc(row.note) + '</div>' : '') + '</div></div>';
-        if (!view) html += '<div class="d-flex flex-wrap gap-1 mt-1"><button type="button" class="btn btn-sm btn-ghost-secondary btn-icon" data-action="fe-row-insert" data-index="' + i + '" title="이 앞에 행"><i class="ti ti-row-insert-top"></i></button><button type="button" class="btn btn-sm btn-ghost-secondary btn-icon" data-action="fe-row-move" data-id="' + esc(row.id) + '" data-dir="up"' + (i === 0 ? ' disabled' : '') + '><i class="ti ti-chevron-up"></i></button><button type="button" class="btn btn-sm btn-ghost-secondary btn-icon" data-action="fe-row-move" data-id="' + esc(row.id) + '" data-dir="down"' + (i === f.rows.length - 1 ? ' disabled' : '') + '><i class="ti ti-chevron-down"></i></button><button type="button" class="btn btn-sm btn-ghost-primary btn-icon" data-action="fe-row-edit" data-id="' + esc(row.id) + '" title="대분류·이름·메모"><i class="ti ti-pencil"></i></button><button type="button" class="btn btn-sm btn-ghost-secondary btn-icon text-purple" data-action="fe-split-add" data-row="' + esc(row.id) + '" title="이 행부터 분기점"' + (f.unitCount < 2 ? ' disabled' : '') + '><i class="ti ti-git-branch"></i></button><button type="button" class="btn btn-sm btn-ghost-danger btn-icon" data-action="fe-row-remove" data-id="' + esc(row.id) + '" title="행 삭제"><i class="ti ti-x"></i></button></div>';
+        if (!view) html += '<div class="d-flex flex-wrap gap-1 mt-1"><button type="button" class="btn btn-sm btn-ghost-secondary btn-icon" data-action="fe-row-insert" data-index="' + i + '" title="이 앞에 행"><i class="ti ti-row-insert-top"></i></button><button type="button" class="btn btn-sm btn-ghost-secondary btn-icon" data-action="fe-row-move" data-id="' + esc(row.id) + '" data-dir="up"' + (i === 0 ? ' disabled' : '') + '><i class="ti ti-chevron-up"></i></button><button type="button" class="btn btn-sm btn-ghost-secondary btn-icon" data-action="fe-row-move" data-id="' + esc(row.id) + '" data-dir="down"' + (i === f.rows.length - 1 ? ' disabled' : '') + '><i class="ti ti-chevron-down"></i></button><button type="button" class="btn btn-sm btn-ghost-primary btn-icon" data-action="fe-row-edit" data-id="' + esc(row.id) + '" title="대분류·이름·메모"><i class="ti ti-pencil"></i></button><button type="button" class="btn btn-sm btn-ghost-secondary btn-icon text-purple" data-action="fe-split-add" data-row="' + esc(row.id) + '" title="이 행부터 분기점"' + (f.unitCount < 2 ? ' disabled' : '') + '><i class="ti ti-git-branch"></i></button>' + (canCloseAt(f, i) ? '<button type="button" class="btn btn-sm btn-ghost-secondary btn-icon text-primary" data-action="fe-split-close" data-row="' + esc(row.id) + '" title="이 행부터 공통 (앞 행에서 분기 합침)"><i class="ti ti-arrows-join"></i></button>' : '') + '<button type="button" class="btn btn-sm btn-ghost-danger btn-icon" data-action="fe-row-remove" data-id="' + esc(row.id) + '" title="행 삭제"><i class="ti ti-x"></i></button></div>';
         return html;
       },
       cell: cellRefHtml,
@@ -174,10 +174,12 @@
   /* 편집 연산: 사본에서 실행, 성공하면 반영 */
   function mutate(fn) {
     syncFromDom();
-    var f = state.editFlow, work = SH.clone(f);
-    try { fn(work); } catch (e) { toast(e.message, true); return false; }
+    var work = SH.clone(state.editFlow);
+    fn(work);
     state.editFlow = work; rerender(); return true;
   }
+  function tryMutate(fn) { try { return mutate(fn); } catch (e) { toast(e.message, true); return false; } }
+  function canCloseAt(sheet, i) { return (sheet.splits || []).some(function (s) { var rg = SH.range(sheet, s); return rg.from < i && i <= rg.to; }); }
   function moduleOptions(domain, showAll) {
     var mods = state.modules.filter(function (m) { return m.active !== false && (showAll || m.domain === domain); });
     var html = CATS.map(function (c) { var ms = mods.filter(function (m) { return m.category === c.id; }); return ms.length ? '<optgroup label="' + esc(c.label) + '">' + ms.map(function (m) { return '<option value="' + esc(m.id) + '">' + esc(m.name) + (m.domain !== domain ? ' [' + esc(domainInfo(m.domain).short) + ']' : '') + '</option>'; }).join('') + '</optgroup>' : ''; }).join('');
@@ -200,20 +202,19 @@
     var f = state.editFlow, atEnd = index >= f.rows.length, leaves = SH.leavesIfInserted(f, index);
     var body = '<div class="text-secondary small mb-2"><i class="ti ti-map-pin me-1"></i>위치: ' + (atEnd ? '끝' : (index + 1) + '행 앞') + (leaves.length > 1 ? ' · 분기 구간 (' + leaves.map(function (l) { return esc(l.name); }).join(' / ') + ')' : ' · 공통 구간') + '</div>'
       + '<div class="row g-2"><div class="col-md-4"><label class="form-label">대분류</label>' + catSelect('category', '', true) + '</div><div class="col-md-8"><label class="form-label">행 이름 <span class="form-label-description">비우면 모듈 이름</span></label><input type="text" class="form-control" name="rowName" autocomplete="off"></div></div>'
-      + (leaves.length > 1 ? '<div class="mt-2"><label class="form-label">어느 분기에</label><select class="form-select" name="target"><option value="__all">모든 분기 (같은 셀을 분기마다)</option>' + leaves.map(function (l) { return '<option value="' + esc(l.id) + '">' + SV.leafLabel(l, f.unitLabel) + ' 에만 (다른 분기는 건너뜀)</option>'; }).join('') + '</select></div>' : '')
+      + (leaves.length > 1 ? '<div class="mt-2"><label class="form-label">어느 분기에</label><select class="form-select" name="target">' + (atEnd ? '<option value="__common">공통 행 — 열린 분기점을 이 행 앞에서 합치고 여기서부터 다시 공통</option>' : '') + '<option value="__all">모든 분기 (같은 셀을 분기마다)</option>' + leaves.map(function (l) { return '<option value="' + esc(l.id) + '">' + SV.leafLabel(l, f.unitLabel) + ' 에만 (다른 분기는 건너뜀)</option>'; }).join('') + '</select></div>' : '')
       + '<div class="mt-2">' + moduleBlock(f.domain, preModule) + '</div><div class="mt-2"><label class="form-label">행 메모</label><input type="text" class="form-control" name="note" autocomplete="off"></div>';
-    return dialog({ title: '행 추가', bodyHtml: body, okLabel: '추가', size: 'lg' }).then(function (v) {
-      if (!v) return false;
-      var spec = readModuleSpec(v), cells = {}; cells[v.target && v.target !== '__all' ? v.target : 'all'] = spec;
-      return mutate(function (w) { SH.rowInsert(w, atEnd ? w.rows.length : index, { category: v.category || spec.mod.category, name: v.rowName || spec.label || spec.mod.name, note: v.note, cells: cells }, S.refCell); SH.validate(w, w.unitLabel); });
-    });
+    return dialog({ title: '행 추가', bodyHtml: body, okLabel: '추가', size: 'lg', submit: function (v) {
+      var spec = readModuleSpec(v), cells = {}; cells[v.target && v.target !== '__all' && v.target !== '__common' ? v.target : 'all'] = spec;
+      return mutate(function (w) { if (atEnd && (!v.target || v.target === '__common')) SH.closeOpenSplits(w); SH.rowInsert(w, atEnd ? w.rows.length : index, { category: v.category || spec.mod.category, name: v.rowName || spec.label || spec.mod.name, note: v.note, cells: cells }, S.refCell); SH.validate(w, w.unitLabel); });
+    } });
   }
   function cellSetDialog(rowId, leafId) {
     var f = state.editFlow, row = SH.rowById(f, rowId), i = SH.idx(f, rowId), leaf = SH.leavesAt(f, i).filter(function (l) { return l.id === leafId; })[0];
-    return dialog({ title: '이 분기의 셀 채우기', bodyHtml: '<div class="text-secondary small mb-2">' + (i + 1) + '행 "' + esc(row.name) + '" · ' + (leaf ? SV.leafLabel(leaf, f.unitLabel) : '') + '</div>' + moduleBlock(f.domain, ''), okLabel: '넣기', size: 'lg' }).then(function (v) {
-      if (!v) return false; var spec = readModuleSpec(v);
+    return dialog({ title: '이 분기의 셀 채우기', bodyHtml: '<div class="text-secondary small mb-2">' + (i + 1) + '행 "' + esc(row.name) + '" · ' + (leaf ? SV.leafLabel(leaf, f.unitLabel) : '') + '</div>' + moduleBlock(f.domain, ''), okLabel: '넣기', size: 'lg', submit: function (v) {
+      var spec = readModuleSpec(v);
       return mutate(function (w) { SH.cellSet(w, rowId, leafId, spec, S.refCell); });
-    });
+    } });
   }
   function cellParamsDialog(cellId) {
     var f = state.editFlow, at = SH.findCell(f, cellId); if (!at) return Promise.resolve(false);
@@ -221,23 +222,22 @@
     var body = '<div class="text-secondary small mb-2">' + (at.index + 1) + '행 "' + esc(at.row.name) + '"' + (at.leaf.path.length ? ' · <span class="step-group">' + esc(at.leaf.path.join(' › ')) + '</span>' : '') + ' · ' + esc(mod.name) + '. 모듈 기본값과 다른 값만 저장됩니다.</div>'
       + '<div class="row g-2"><div class="col-md-6"><label class="form-label">표시 이름 <span class="form-label-description">비우면 모듈 이름</span></label><input type="text" class="form-control" name="label" value="' + esc(c.label || '') + '" autocomplete="off"></div><div class="col-md-6"><label class="form-label">메모</label><input type="text" class="form-control" name="note" value="' + esc(c.note || '') + '" autocomplete="off"></div></div>'
       + '<div class="subheader mt-3 mb-1">계획 조건</div>' + P.inputs(mod.fields, Object.assign({}, S.defaults(mod.fields), c.params || {}), { optional: true });
-    return dialog({ title: '셀 조건 · ' + (c.label || mod.name), bodyHtml: body, okLabel: '적용', size: 'lg' }).then(function (v) {
-      if (!v) return false;
+    return dialog({ title: '셀 조건 · ' + (c.label || mod.name), bodyHtml: body, okLabel: '적용', size: 'lg', submit: function (v) {
       return mutate(function (w) { var x = SH.findCell(w, cellId); x.cell.label = v.label; x.cell.note = v.note; x.cell.params = paramsDiff(mod, P.read(mod.fields, v)); });
-    });
+    } });
   }
   function rowEditDialog(rowId) {
     var f = state.editFlow, row = SH.rowById(f, rowId);
     var body = '<div class="row g-2"><div class="col-md-4"><label class="form-label required">대분류</label>' + catSelect('category', row.category, false) + '</div><div class="col-md-8"><label class="form-label required">행 이름</label><input type="text" class="form-control" name="name" required value="' + esc(row.name) + '" autocomplete="off"></div></div><div class="mt-2"><label class="form-label">메모</label><input type="text" class="form-control" name="note" value="' + esc(row.note) + '" autocomplete="off"></div>';
-    return dialog({ title: '행 수정 · ' + (SH.idx(f, rowId) + 1) + '. ' + row.name, bodyHtml: body, okLabel: '저장', size: 'md' }).then(function (v) { if (!v) return false; return mutate(function (w) { SH.rowEdit(w, rowId, v); }); });
+    return dialog({ title: '행 수정 · ' + (SH.idx(f, rowId) + 1) + '. ' + row.name, bodyHtml: body, okLabel: '저장', size: 'md', submit: function (v) { return mutate(function (w) { SH.rowEdit(w, rowId, v); }); } });
   }
   function splitAddDialog(preRowId) {
     var f = state.editFlow;
-    return dialog({ title: '분기점 추가', bodyHtml: SV.splitAddBody(f, f.unitLabel, preRowId), okLabel: '분기점 만들기', size: 'md' }).then(function (v) { if (!v) return false; return mutate(function (w) { SH.splitAdd(w, Object.assign({ unitLabel: w.unitLabel }, SV.readSplitAdd(v)), S.cloneRef, S.always); }); });
+    return dialog({ title: '분기점 추가', bodyHtml: SV.splitAddBody(f, f.unitLabel, preRowId), okLabel: '분기점 만들기', size: 'md', submit: function (v) { return mutate(function (w) { SH.splitAdd(w, Object.assign({ unitLabel: w.unitLabel }, SV.readSplitAdd(v)), S.cloneRef, S.always); }); } });
   }
   function splitEditDialog(splitId) {
     var f = state.editFlow, sp = SH.splitById(f, splitId);
-    return dialog({ title: '분기 수정 · ' + (sp.name || '분기점'), bodyHtml: SV.splitEditBody(f, sp, f.unitLabel), okLabel: '저장', size: 'md' }).then(function (v) { if (!v) return false; return mutate(function (w) { SH.splitEdit(w, splitId, Object.assign({ unitLabel: w.unitLabel }, SV.readSplitEdit(v)), S.cloneRef, S.always, S.always); }); });
+    return dialog({ title: '분기 수정 · ' + (sp.name || '분기점'), bodyHtml: SV.splitEditBody(f, sp, f.unitLabel), okLabel: '저장', size: 'md', submit: function (v) { return mutate(function (w) { SH.splitEdit(w, splitId, Object.assign({ unitLabel: w.unitLabel }, SV.readSplitEdit(v)), S.cloneRef, S.always, S.always); }); } });
   }
   function copyOf(src, kind) { var cp = JSON.parse(JSON.stringify(src)); delete cp.id; delete cp.createdAt; delete cp.seed; delete cp.ownerId; delete cp.ownerName; delete cp._view; cp.name = src.name + ' (복사)'; if (kind === 'flow') SH.reid(cp); return cp; }
 
@@ -292,18 +292,19 @@
       case 'flow-cancel': state.editFlow = null; render(); break;
       case 'flow-delete': { var fd = flowById(id); if (!fd) break; var fu = flowUsage(id); confirmDlg({ title: '흐름 삭제', message: '"' + fd.name + '" 흐름을 삭제할까요?' + (fu.runs ? ' 이미 만들어진 런 ' + fu.runs + '개는 그대로 남습니다.' : ''), okLabel: '삭제', danger: true }).then(function (ok) { if (!ok) return; return store.deleteFlow(id).then(function () { toast('삭제했습니다.'); return refresh(); }); }).catch(handleError); break; }
       /* ----- 흐름 편집기 ----- */
-      case 'fe-add-module': { var sel = $('#fe-am'); if (!sel || !sel.value || !f) break; var mod = modById(sel.value); mutate(function (w) { SH.rowInsert(w, w.rows.length, { category: mod ? mod.category : 'etc', name: mod ? mod.name : '', cells: { all: { moduleId: sel.value } } }, S.refCell); }); break; }
-      case 'fe-add-flow': { var sf = $('#fe-af'); if (!sf || !sf.value || !f) break; var sub = flowById(sf.value); if (!sub) break; mutate(function (w) { SH.appendSheet(w, sub, S.refCell, { adopt: !w.rows.length, unitLabel: w.unitLabel }); }); break; }
+      case 'fe-add-module': { var sel = $('#fe-am'); if (!sel || !sel.value || !f) break; var mod = modById(sel.value); tryMutate(function (w) { SH.closeOpenSplits(w); SH.rowInsert(w, w.rows.length, { category: mod ? mod.category : 'etc', name: mod ? mod.name : '', cells: { all: { moduleId: sel.value } } }, S.refCell); }); break; }
+      case 'fe-add-flow': { var sf = $('#fe-af'); if (!sf || !sf.value || !f) break; var sub = flowById(sf.value); if (!sub) break; tryMutate(function (w) { SH.closeOpenSplits(w); SH.appendSheet(w, sub, S.refCell, { adopt: !w.rows.length, unitLabel: w.unitLabel }); }); break; }
       case 'fe-row-insert': { if (!f) break; syncFromDom(); var ix = el.getAttribute('data-index'); var pm = $('#fe-am'); rowInsertDialog(ix === 'end' ? f.rows.length : Number(ix) || 0, ix === 'end' && pm ? pm.value : '').catch(handleError); break; }
-      case 'fe-row-remove': { if (!f) break; mutate(function (w) { SH.rowRemove(w, id, S.always); }); break; }
-      case 'fe-row-move': { if (!f) break; mutate(function (w) { SH.rowMove(w, id, el.getAttribute('data-dir')); }); break; }
+      case 'fe-row-remove': { if (!f) break; tryMutate(function (w) { SH.rowRemove(w, id, S.always); }); break; }
+      case 'fe-row-move': { if (!f) break; tryMutate(function (w) { SH.rowMove(w, id, el.getAttribute('data-dir')); }); break; }
       case 'fe-row-edit': { if (!f) break; syncFromDom(); rowEditDialog(id).catch(handleError); break; }
       case 'fe-cell-set': { if (!f) break; syncFromDom(); cellSetDialog(el.getAttribute('data-row'), el.getAttribute('data-leaf')).catch(handleError); break; }
-      case 'fe-cell-clear': { if (!f) break; var rid = el.getAttribute('data-row'), lid = el.getAttribute('data-leaf'); mutate(function (w) { SH.cellClear(w, rid, lid, S.always); }); break; }
+      case 'fe-cell-clear': { if (!f) break; var rid = el.getAttribute('data-row'), lid = el.getAttribute('data-leaf'); tryMutate(function (w) { SH.cellClear(w, rid, lid, S.always); }); break; }
       case 'fe-cell-params': { if (!f) break; syncFromDom(); cellParamsDialog(id).catch(handleError); break; }
       case 'fe-split-add': { if (!f) break; syncFromDom(); if (!f.rows.length) { toast('먼저 행을 추가하세요.', true); break; } splitAddDialog(el.getAttribute('data-row') || null).catch(handleError); break; }
       case 'fe-split-edit': { if (!f) break; syncFromDom(); splitEditDialog(id).catch(handleError); break; }
-      case 'fe-split-remove': { if (!f) break; mutate(function (w) { SH.splitRemove(w, id, S.always); }); break; }
+      case 'fe-split-remove': { if (!f) break; tryMutate(function (w) { SH.splitRemove(w, id, S.always); }); break; }
+      case 'fe-split-close': { if (!f) break; var rowC = el.getAttribute('data-row'); tryMutate(function (w) { SH.splitCloseAt(w, rowC, S.cloneRef, S.always, S.always, w.unitLabel); }); break; }
     }
   });
   window.addEventListener('hashchange', function () { readHash(); state.editModule = null; state.editFlow = null; render(); });
