@@ -19,6 +19,20 @@
 
 create extension if not exists "pgcrypto";
 
+-- 계정: 이름 + PIN(SHA-256 해시). 권한 검사는 브라우저에서 하므로 내부용. 관리자 계정은 앱이 처음 실행될 때 만듭니다.
+create table if not exists public.accounts (
+  id           text primary key,
+  name         text not null,
+  team         text not null default '',
+  pin_hash     text not null,
+  role         text not null default 'member' check (role in ('admin', 'member')),
+  created_at   timestamptz not null default now()
+);
+create unique index if not exists accounts_name_key on public.accounts (lower(replace(name, ' ', '')));
+alter table public.accounts enable row level security;
+drop policy if exists "accounts: all" on public.accounts;
+create policy "accounts: all" on public.accounts for all to anon, authenticated using (true) with check (true);
+
 create table if not exists public.modules (
   id           text primary key,
   domain       text not null default 'device',
@@ -82,6 +96,18 @@ alter table public.runs add column if not exists unit_label text not null defaul
 alter table public.runs add column if not exists unit_count integer not null default 1;
 alter table public.runs add column if not exists units jsonb not null default '[]'::jsonb;
 alter table public.runs add column if not exists tree jsonb not null default '[]'::jsonb;
+alter table public.runs add column if not exists owner_id text;
+alter table public.runs add column if not exists archived boolean not null default false;
+alter table public.runs add column if not exists archived_at timestamptz;
+create index if not exists runs_owner_idx on public.runs (owner_id, updated_at desc);
+create index if not exists runs_archived_idx on public.runs (archived, archived_at desc);
+-- 라이브러리 소유·잠금: seed = 기본 제공(수정·삭제 불가), owner_id = 만든 계정
+alter table public.modules add column if not exists seed boolean not null default false;
+alter table public.modules add column if not exists owner_id text;
+alter table public.modules add column if not exists owner_name text not null default '';
+alter table public.flows add column if not exists seed boolean not null default false;
+alter table public.flows add column if not exists owner_id text;
+alter table public.flows add column if not exists owner_name text not null default '';
 create index if not exists runs_status_idx on public.runs (status, updated_at desc);
 create index if not exists runs_team_idx on public.runs (team, domain);
 create unique index if not exists runs_code_key on public.runs (code);

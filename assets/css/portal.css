@@ -26,6 +26,9 @@ html { color-scheme: light; }
 .brand-tag { font-size: 0.6rem; letter-spacing: 0.08em; text-transform: uppercase; }
 @media (max-width: 575.98px) { .navbar .navbar-brand-image { height: 1.5rem; } .brand-tag, .kaist-strip-text { display: none; } }
 .page-header .page-title { text-wrap: balance; }
+/* 로그인 전에는 메뉴 숨김 (Tabler forces display:flex on .navbar-collapse at md+) */
+.navbar-collapse.is-hidden, .navbar-toggler.is-hidden { display: none !important; }
+.border-purple { border-color: #ae3ec9 !important; }
 .page-title { font-weight: 700; }
 .tnum { font-variant-numeric: tabular-nums; }
 .table td .sub { display: block; font-size: 0.78rem; color: var(--tblr-secondary); }

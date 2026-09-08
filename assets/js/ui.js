@@ -72,7 +72,12 @@
       var ctrl = form ? form.elements[name] : null;
       var val = '';
       if (ctrl) {
-        if (ctrl.length !== undefined && !ctrl.tagName) { Array.prototype.forEach.call(ctrl, function (r) { if (r.checked) val = r.value; }); }
+        if (ctrl.length !== undefined && !ctrl.tagName) {
+          /* 같은 이름이 여러 개: 라디오는 체크된 것, 그 외(블록마다 반복되는 select 등)는 활성화된 첫 요소 */
+          var picked = null;
+          Array.prototype.forEach.call(ctrl, function (r) { if (r.type === 'radio') { if (r.checked) picked = r; } else if (!picked && !r.disabled) picked = r; });
+          val = picked ? (picked.type === 'checkbox' ? (picked.checked ? 'true' : 'false') : picked.value) : '';
+        }
         else if (ctrl.type === 'checkbox') val = ctrl.checked ? 'true' : 'false';
         else val = ctrl.value;
       }

@@ -1,18 +1,19 @@
 /* =====================================================================
    DSIL Run Sheet – 라이브러리: 분류(소자/패키징)별 공정 모듈 + 공정 흐름(모듈·서브 흐름·분기점의 재조합)
-   해시: #tab=modules | #tab=flows   분류 필터: state.domain
+   기본 제공(seed) 항목은 수정·삭제 불가(복사만). 내가 만든 항목만 수정·삭제. 해시: #tab=modules | #tab=flows
    ===================================================================== */
 (function () {
   'use strict';
 
   var CFG = window.DSIL_CONFIG || {};
   var U = window.DSILUI, P = window.DSILParams, S = window.DSILStore, L = window.DSILLayout;
-  var esc = U.esc, fmtDuration = U.fmtDuration, $ = U.$, $all = U.$all, toast = U.toast, readForm = U.readForm, dialog = U.dialog, confirmDlg = U.confirmDlg, empty = U.empty;
+  var esc = U.esc, $ = U.$, $all = U.$all, toast = U.toast, readForm = U.readForm, dialog = U.dialog, confirmDlg = U.confirmDlg, empty = U.empty;
   var store = S.create(CFG);
   var DOMAINS = CFG.domains || [];
-  var state = { ready: false, error: null, tab: 'modules', domain: '', modules: [], flows: [], runs: [], editModule: null, editFlow: null, q: '' };
+  var state = { ready: false, error: null, tab: 'modules', domain: '', mineOnly: false, modules: [], flows: [], runs: [], editModule: null, editFlow: null, q: '' };
 
   function uid() { return 'it-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
+  function me() { return store.getMe(); }
   function modById(id) { return state.modules.filter(function (m) { return m.id === id; })[0] || null; }
   function flowById(id) { return state.flows.filter(function (f) { return f.id === id; })[0] || null; }
   function domainInfo(id) { return DOMAINS.filter(function (d) { return d.id === id; })[0] || { id: id, label: id || '-', short: id || '-' }; }
@@ -20,8 +21,12 @@
   function readHash() { var m = /tab=(\w+)/.exec(window.location.hash); state.tab = m && m[1] === 'flows' ? 'flows' : 'modules'; var d = /domain=(\w+)/.exec(window.location.hash); if (d) state.domain = d[1] === 'all' ? '' : d[1]; }
   function ctx() { return { modules: state.modules, flows: state.flows }; }
   function inDomain(x) { return !state.domain || x.domain === state.domain; }
+  function canEditItem(x) { var m = me(); return !x.seed && !!m.id && (m.isAdmin || !x.ownerId || x.ownerId === m.id); }
+  function isMine(x) { var m = me(); return !!m.id && x.ownerId === m.id; }
+  function ownerBadge(x) { return x.seed ? '<span class="badge bg-secondary-lt" title="기본 제공: 수정·삭제 불가, 복사해서 쓰세요"><i class="ti ti-lock"></i> 기본</span>' : (isMine(x) ? '<span class="badge bg-green-lt">내 것</span>' : (x.ownerName ? '<span class="badge bg-secondary-lt">' + esc(x.ownerName) + '</span>' : '')); }
+  function visible(list) { return list.filter(inDomain).filter(function (x) { return !state.mineOnly || isMine(x); }); }
 
-  function reload() { return Promise.all([store.listModules(), store.listFlows(), store.listRuns()]).then(function (r) { state.modules = r[0]; state.flows = r[1]; state.runs = r[2]; }); }
+  function reload() { return Promise.all([store.listModules(), store.listFlows(), store.listRuns({ scope: 'mine' })]).then(function (r) { state.modules = r[0]; state.flows = r[1]; state.runs = r[2]; }); }
 
   function moduleUsage(id) {
     var flows = state.flows.filter(function (f) { var u = false; S.eachStep(f.items, function (it) { if (it.kind === 'module' && it.refId === id) u = true; }); return u; });
@@ -36,15 +41,16 @@
   /* ---------- 렌더 ---------- */
   function renderChrome() {
     var slot = $('#user-slot'); if (!slot) return;
-    var m = store.getMe();
-    slot.innerHTML = m.name ? '<span class="text-secondary small"><i class="ti ti-user me-1"></i>' + esc(m.name) + (m.team ? ' · ' + esc(m.team) : '') + '</span>' : '';
+    var m = me();
+    slot.innerHTML = m.id ? '<a href="../index.html" class="btn btn-sm"><span class="avatar avatar-xs ' + (m.isAdmin ? 'bg-primary text-white' : 'bg-blue-lt') + ' me-1">' + esc(m.name.charAt(0)) + '</span>' + esc(m.name) + (m.team ? ' <span class="text-secondary">· ' + esc(m.team) + '</span>' : '') + '</a>' : '';
   }
   function render() {
     var app = $('#app'); renderChrome(); if (!app) return;
     if (state.error) { app.innerHTML = '<div class="alert alert-danger"><h4 class="alert-title">오류</h4><div class="text-secondary">' + esc(state.error) + '</div></div>'; return; }
     if (!state.ready) { app.innerHTML = '<div class="text-secondary text-center py-5">불러오는 중…</div>'; return; }
-    var mods = state.modules.filter(inDomain), flows = state.flows.filter(inDomain);
+    var mods = visible(state.modules), flows = visible(state.flows);
     var html = '<div class="d-flex flex-wrap align-items-center gap-2 mb-3"><div class="btn-group">' + [{ id: '', label: '전체' }].concat(DOMAINS).map(function (d) { return '<button type="button" class="btn' + (state.domain === d.id ? ' active btn-primary' : '') + '" data-action="domain" data-domain="' + d.id + '">' + (d.icon ? '<i class="ti ti-' + d.icon + ' me-1"></i>' : '') + esc(d.label) + '</button>'; }).join('') + '</div>'
+      + '<label class="form-check mb-0 ms-2"><input class="form-check-input" type="checkbox" data-action="mine-only"' + (state.mineOnly ? ' checked' : '') + '><span class="form-check-label">내가 만든 것만</span></label>'
       + '<ul class="nav nav-tabs ms-md-3 mb-0 flex-fill"><li class="nav-item"><a class="nav-link' + (state.tab === 'modules' ? ' active' : '') + '" href="#tab=modules"><i class="ti ti-box me-1"></i>공정 모듈 <span class="badge bg-secondary-lt ms-1">' + mods.length + '</span></a></li><li class="nav-item"><a class="nav-link' + (state.tab === 'flows' ? ' active' : '') + '" href="#tab=flows"><i class="ti ti-git-branch me-1"></i>공정 흐름 <span class="badge bg-secondary-lt ms-1">' + flows.length + '</span></a></li></ul></div>';
     app.innerHTML = html + (state.tab === 'flows' ? renderFlows(flows) : renderModules(mods));
   }
@@ -53,25 +59,25 @@
   function renderModules(mods) {
     var q = state.q.trim().toLowerCase();
     var list = mods.filter(function (m) { return !q || [m.name, m.equipment, m.description, P.catInfo(m.category).label].join(' ').toLowerCase().indexOf(q) >= 0; });
-    var html = '<div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3"><div class="text-secondary small">모듈은 한 번 정의해 여러 흐름·런에서 재사용하는 공정 단위입니다. 분류(소자/패키징)·세부 분류·조건 항목·확인 사항을 정합니다.</div>'
+    var html = '<div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3"><div class="text-secondary small">모듈은 한 번 정의해 여러 런시트에서 재사용하는 공정 단위입니다. <span class="badge bg-secondary-lt"><i class="ti ti-lock"></i> 기본</span> 항목은 수정·삭제할 수 없고 <i class="ti ti-copy"></i> 복사해서 내 것으로 만듭니다.</div>'
       + '<div class="d-flex gap-2"><input type="search" class="form-control form-control-sm" id="mod-q" placeholder="검색" value="' + esc(state.q) + '" style="width:12rem"><button type="button" class="btn btn-sm btn-primary" data-action="mod-new"><i class="ti ti-plus me-1"></i>모듈 추가</button></div></div>';
     if (state.editModule) html += moduleEditor(state.editModule);
-    if (!list.length) return html + '<div class="card">' + empty('box-off', '모듈이 없습니다', '"모듈 추가"로 첫 공정 모듈을 만드세요.') + '</div>';
+    if (!list.length) return html + '<div class="card">' + empty('box-off', '모듈이 없습니다', state.mineOnly ? '기본 모듈을 복사하거나 "모듈 추가"로 만드세요.' : '"모듈 추가"로 첫 공정 모듈을 만드세요.') + '</div>';
     var cats = (CFG.categories || []).map(function (c) { return c.id; }), doms = DOMAINS.map(function (d) { return d.id; });
     list.sort(function (a, b) { var da = doms.indexOf(a.domain), db = doms.indexOf(b.domain); if (da !== db) return da - db; var ca = cats.indexOf(a.category), cb = cats.indexOf(b.category); return ca !== cb ? ca - cb : a.name.localeCompare(b.name, 'ko'); });
-    html += '<div class="card"><div class="table-responsive"><table class="table table-vcenter card-table"><thead><tr><th>모듈</th><th class="w-1">분류</th><th>장비</th><th>조건 항목</th><th class="w-1">사용</th><th class="w-1"></th></tr></thead><tbody>'
+    html += '<div class="card"><div class="table-responsive"><table class="table table-vcenter card-table"><thead><tr><th>모듈</th><th class="w-1">분류</th><th>장비</th><th>조건 항목</th><th class="w-1">출처</th><th class="w-1"></th></tr></thead><tbody>'
       + list.map(function (m) {
-        var u = moduleUsage(m.id);
+        var ed = canEditItem(m);
         return '<tr' + (m.active === false ? ' class="text-secondary"' : '') + '><td><div class="fw-medium">' + esc(m.name) + (m.active === false ? ' <span class="badge bg-secondary-lt">비활성</span>' : '') + '</div>' + (m.description ? '<div class="small text-secondary">' + esc(m.description) + '</div>' : '') + '</td><td class="text-nowrap">' + domainBadge(m.domain) + ' ' + P.catBadge(m.category) + '</td><td class="small">' + esc(m.equipment || '-') + '</td>'
           + '<td class="small">' + (m.fields.length ? m.fields.map(function (f) { return esc(f.label) + (f.unit ? '(' + esc(f.unit) + ')' : '') + (f.required ? '*' : ''); }).join(', ') : '<span class="text-secondary">없음</span>') + (m.checklist.length ? '<div class="text-secondary">확인 ' + m.checklist.length + '항목</div>' : '') + '</td>'
-          + '<td class="text-nowrap small">' + (u.flows.length ? '<span title="' + esc(u.flows.map(function (f) { return f.name; }).join(', ')) + '">흐름 ' + u.flows.length + '</span>' : '') + (u.runs ? (u.flows.length ? ' · ' : '') + '런 ' + u.runs : '') + (!u.flows.length && !u.runs ? '-' : '') + '</td>'
-          + '<td class="text-end text-nowrap"><button type="button" class="btn btn-sm btn-ghost-secondary btn-icon" data-action="mod-copy" data-id="' + esc(m.id) + '" title="복제"><i class="ti ti-copy"></i></button><button type="button" class="btn btn-sm btn-ghost-primary btn-icon" data-action="mod-edit" data-id="' + esc(m.id) + '" title="수정"><i class="ti ti-pencil"></i></button><button type="button" class="btn btn-sm btn-ghost-danger btn-icon" data-action="mod-delete" data-id="' + esc(m.id) + '" title="삭제"><i class="ti ti-trash"></i></button></td></tr>';
+          + '<td class="text-nowrap">' + ownerBadge(m) + '</td>'
+          + '<td class="text-end text-nowrap"><button type="button" class="btn btn-sm btn-ghost-secondary btn-icon" data-action="mod-copy" data-id="' + esc(m.id) + '" title="복사해서 내 모듈로"><i class="ti ti-copy"></i></button>' + (ed ? '<button type="button" class="btn btn-sm btn-ghost-primary btn-icon" data-action="mod-edit" data-id="' + esc(m.id) + '" title="수정"><i class="ti ti-pencil"></i></button><button type="button" class="btn btn-sm btn-ghost-danger btn-icon" data-action="mod-delete" data-id="' + esc(m.id) + '" title="삭제"><i class="ti ti-trash"></i></button>' : '<button type="button" class="btn btn-sm btn-ghost-secondary btn-icon" data-action="mod-view" data-id="' + esc(m.id) + '" title="보기"><i class="ti ti-eye"></i></button>') + '</td></tr>';
       }).join('') + '</tbody></table></div></div>';
     return html;
   }
   function moduleEditor(m) {
-    var isNew = !m.id;
-    return '<div class="card mb-3 border-primary" id="mod-form-card"><div class="card-header"><h3 class="card-title">' + (isNew ? '모듈 추가' : '모듈 수정: ' + esc(m.name)) + '</h3></div><div class="card-body"><form id="module-form">'
+    var isNew = !m.id, view = !!m._view;
+    return '<div class="card mb-3 border-primary" id="mod-form-card"><div class="card-header"><h3 class="card-title">' + (view ? '모듈 보기: ' + esc(m.name) + ' <span class="text-secondary fw-normal small">(수정하려면 복사)</span>' : isNew ? '모듈 추가' : '모듈 수정: ' + esc(m.name)) + '</h3></div><div class="card-body"><form id="module-form"><fieldset' + (view ? ' disabled' : '') + '>'
       + '<input type="hidden" name="modId" value="' + esc(m.id || '') + '">'
       + '<div class="row g-2"><div class="col-md-3"><label class="form-label required">공정 분류</label><select class="form-select" name="domain">' + DOMAINS.map(function (d) { return '<option value="' + d.id + '"' + ((m.domain || state.domain || DOMAINS[0].id) === d.id ? ' selected' : '') + '>' + esc(d.label) + '</option>'; }).join('') + '</select></div>'
       + '<div class="col-md-4"><label class="form-label required">모듈 이름</label><input type="text" class="form-control" name="name" required value="' + esc(m.name || '') + '" autocomplete="off" placeholder="예: ALD 유전막"></div>'
@@ -79,27 +85,27 @@
       + '<div class="col-md-2"><label class="form-label">예상 시간(분)</label><input type="number" class="form-control" name="minutes" min="0" value="' + esc(m.minutes || '') + '"></div></div>'
       + '<div class="row g-2 mt-1"><div class="col-md-4"><label class="form-label">장비</label><input type="text" class="form-control" name="equipment" value="' + esc(m.equipment || '') + '" autocomplete="off"></div><div class="col-md-8"><label class="form-label">설명</label><input type="text" class="form-control" name="description" value="' + esc(m.description || '') + '" autocomplete="off"></div></div>'
       + '<div class="mt-2"><label class="form-label">확인 사항 <span class="form-label-description">한 줄에 하나, 기록 창에 체크리스트로 표시</span></label><textarea class="form-control" name="checklist" rows="2">' + esc((m.checklist || []).join('\n')) + '</textarea></div>'
-      + (isNew ? '' : '<label class="form-check mt-3"><input class="form-check-input" type="checkbox" name="active"' + (m.active !== false ? ' checked' : '') + '><span class="form-check-label">사용 중 (끄면 새 흐름·스텝 추가 목록에서 숨김)</span></label>')
-      + '<div class="d-flex align-items-center justify-content-between mt-4 mb-1"><div class="subheader mb-0">조건 항목 <span class="text-secondary fw-normal text-lowercase">런시트에서 계획값·실제값을 적는 칸</span></div><button type="button" class="btn btn-sm" data-action="field-add"><i class="ti ti-plus me-1"></i>항목</button></div>'
-      + '<div class="text-secondary small mb-2">이름 · 종류 · 단위 · 선택지(선택 종류) · 기본값(흐름의 계획값으로 들어감) · 필수. 저장 키는 유지되므로 이름을 바꿔도 지난 기록과 연결됩니다.</div>'
-      + '<div id="field-rows">' + (m.fields || []).map(P.fieldRowHtml).join('') + '</div>'
-      + '<div class="mt-4 d-flex gap-2"><button type="submit" class="btn btn-primary">' + (isNew ? '추가' : '저장') + '</button><button type="button" class="btn" data-action="mod-cancel">취소</button></div></form></div></div>';
+      + (isNew || view ? '' : '<label class="form-check mt-3"><input class="form-check-input" type="checkbox" name="active"' + (m.active !== false ? ' checked' : '') + '><span class="form-check-label">사용 중 (끄면 새 흐름·스텝 추가 목록에서 숨김)</span></label>')
+      + '<div class="d-flex align-items-center justify-content-between mt-4 mb-1"><div class="subheader mb-0">조건 항목 <span class="text-secondary fw-normal text-lowercase">런시트에서 계획값·실제값을 적는 칸</span></div>' + (view ? '' : '<button type="button" class="btn btn-sm" data-action="field-add"><i class="ti ti-plus me-1"></i>항목</button>') + '</div>'
+      + '<div class="text-secondary small mb-2">이름 · 종류 · 단위 · 선택지(선택 종류) · 기본값(계획값으로 들어감) · 필수. 저장 키는 유지되므로 이름을 바꿔도 지난 기록과 연결됩니다.</div>'
+      + '<div id="field-rows">' + (m.fields || []).map(P.fieldRowHtml).join('') + '</div></fieldset>'
+      + '<div class="mt-4 d-flex gap-2">' + (view ? '<button type="button" class="btn btn-primary" data-action="mod-copy" data-id="' + esc(m.id) + '"><i class="ti ti-copy me-1"></i>복사해서 내 모듈로</button>' : '<button type="submit" class="btn btn-primary">' + (isNew ? '추가' : '저장') + '</button>') + '<button type="button" class="btn" data-action="mod-cancel">' + (view ? '닫기' : '취소') + '</button></div></form></div></div>';
   }
 
   /* ---------- 흐름 ---------- */
   function renderFlows(flows) {
-    var html = '<div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3"><div class="text-secondary small">흐름은 모듈(또는 다른 흐름)을 순서대로 엮은 런시트 템플릿입니다. <b>분기점</b>을 넣으면 기판 수량을 나눠 분기별로 다른 흐름을 지정하고, 분기점 뒤의 항목은 다시 합쳐진(merge) 공정이 됩니다.</div>'
+    var html = '<div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3"><div class="text-secondary small">흐름은 런시트 템플릿입니다. 런을 만들 때 복사해 시작하거나, 런시트 편집에서 통째로 불러옵니다. <b>분기점</b>을 넣으면 기판 수량을 나눠 분기별로 다른 흐름을 지정하고, 분기점 뒤의 항목은 다시 합쳐진(merge) 공정입니다.</div>'
       + '<button type="button" class="btn btn-sm btn-primary" data-action="flow-new"><i class="ti ti-plus me-1"></i>흐름 추가</button></div>';
     if (state.editFlow) html += flowEditor(state.editFlow);
-    if (!flows.length) return html + '<div class="card">' + empty('git-branch', '흐름이 없습니다', '"흐름 추가"에서 모듈을 순서대로 넣으세요.') + '</div>';
-    html += '<div class="card"><div class="table-responsive"><table class="table table-vcenter card-table"><thead><tr><th>흐름</th><th>구성</th><th class="w-1">스텝</th><th class="w-1">수량</th><th class="w-1">사용</th><th class="w-1"></th></tr></thead><tbody>'
+    if (!flows.length) return html + '<div class="card">' + empty('git-branch', '흐름이 없습니다', state.mineOnly ? '기본 흐름을 복사하거나 "흐름 추가"로 만드세요.' : '"흐름 추가"에서 모듈을 순서대로 넣으세요.') + '</div>';
+    html += '<div class="card"><div class="table-responsive"><table class="table table-vcenter card-table"><thead><tr><th>흐름</th><th>구성</th><th class="w-1">스텝</th><th class="w-1">수량</th><th class="w-1">출처</th><th class="w-1"></th></tr></thead><tbody>'
       + flows.map(function (f) {
-        var ex = expandSafe(f.items, f.id), st = ex.tree ? L.stats(L.resolve(ex.tree)) : { steps: 0, splits: 0 }, u = flowUsage(f.id);
+        var ex = expandSafe(f.items, f.id), st = ex.tree ? L.stats(L.resolve(ex.tree)) : { steps: 0, splits: 0 }, ed = canEditItem(f);
         return '<tr><td><div class="fw-medium">' + domainBadge(f.domain) + ' ' + esc(f.name) + '</div>' + (f.device ? '<div class="small text-primary">' + esc(f.device) + '</div>' : '') + (f.description ? '<div class="small text-secondary">' + esc(f.description) + '</div>' : '') + '</td>'
           + '<td class="small">' + itemChips(f.items) + '</td>'
           + '<td class="text-nowrap tnum">' + st.steps + (st.splits ? ' <span class="badge bg-purple-lt" title="분기점">분기 ' + st.splits + '</span>' : '') + (ex.error ? ' <span class="text-red" title="' + esc(ex.error) + '">!</span>' : '') + '</td><td class="text-nowrap small">' + esc(f.unitLabel) + ' ' + f.unitCount + '</td>'
-          + '<td class="text-nowrap small">' + (u.flows.length ? '흐름 ' + u.flows.length : '') + (u.runs ? (u.flows.length ? ' · ' : '') + '런 ' + u.runs : '') + (!u.flows.length && !u.runs ? '-' : '') + '</td>'
-          + '<td class="text-end text-nowrap"><a href="../index.html?new=' + encodeURIComponent(f.id) + '" class="btn btn-sm btn-primary me-1"><i class="ti ti-player-play me-1"></i>런 시작</a><button type="button" class="btn btn-sm btn-ghost-secondary btn-icon" data-action="flow-copy" data-id="' + esc(f.id) + '" title="복제"><i class="ti ti-copy"></i></button><button type="button" class="btn btn-sm btn-ghost-primary btn-icon" data-action="flow-edit" data-id="' + esc(f.id) + '" title="수정"><i class="ti ti-pencil"></i></button><button type="button" class="btn btn-sm btn-ghost-danger btn-icon" data-action="flow-delete" data-id="' + esc(f.id) + '" title="삭제"><i class="ti ti-trash"></i></button></td></tr>';
+          + '<td class="text-nowrap">' + ownerBadge(f) + '</td>'
+          + '<td class="text-end text-nowrap"><a href="../index.html?new=' + encodeURIComponent(f.id) + '" class="btn btn-sm btn-primary me-1" title="이 흐름을 복사해 새 런 시작"><i class="ti ti-player-play me-1"></i>런 시작</a><button type="button" class="btn btn-sm btn-ghost-secondary btn-icon" data-action="flow-copy" data-id="' + esc(f.id) + '" title="복사해서 내 흐름으로"><i class="ti ti-copy"></i></button>' + (ed ? '<button type="button" class="btn btn-sm btn-ghost-primary btn-icon" data-action="flow-edit" data-id="' + esc(f.id) + '" title="수정"><i class="ti ti-pencil"></i></button><button type="button" class="btn btn-sm btn-ghost-danger btn-icon" data-action="flow-delete" data-id="' + esc(f.id) + '" title="삭제"><i class="ti ti-trash"></i></button>' : '<button type="button" class="btn btn-sm btn-ghost-secondary btn-icon" data-action="flow-view" data-id="' + esc(f.id) + '" title="보기"><i class="ti ti-eye"></i></button>') + '</td></tr>';
       }).join('') + '</tbody></table></div></div>';
     return html;
   }
@@ -148,7 +154,7 @@
     var f = state.editFlow, dom = f.domain || DOMAINS[0].id;
     var mods = state.modules.filter(function (m) { return m.active !== false; });
     var cats = CFG.categories || [];
-    var domOrder = DOMAINS.filter(function (d) { return d.id === dom; }).concat(DOMAINS.filter(function (d) { return d.id !== dom; }));   /* 이 흐름의 분류를 먼저 */
+    var domOrder = DOMAINS.filter(function (d) { return d.id === dom; }).concat(DOMAINS.filter(function (d) { return d.id !== dom; }));
     var modOpts = domOrder.map(function (d) { var inD = mods.filter(function (m) { return m.domain === d.id; }); if (!inD.length) return ''; return cats.map(function (c) { var ms = inD.filter(function (m) { return m.category === c.id; }); return ms.length ? '<optgroup label="' + esc((d.id === dom ? '' : d.short + ' · ') + c.label) + '">' + ms.map(function (m) { return '<option value="' + esc(m.id) + '">' + esc(m.name) + '</option>'; }).join('') + '</optgroup>' : ''; }).join(''); }).join('');
     var flowPool = state.flows.filter(function (x) { return x.id !== f.id && !S.hasSplit(x.items) && !(f.id && flowUsage(f.id).flows.some(function (y) { return y.id === x.id; })); });
     var flowOpts = flowPool.filter(function (x) { return x.domain === dom; }).concat(flowPool.filter(function (x) { return x.domain !== dom; })).map(function (x) { return '<option value="' + esc(x.id) + '">' + (x.domain !== dom ? '[' + esc(domainInfo(x.domain).short) + '] ' : '') + esc(x.name) + ' (' + x.items.length + '항목)</option>'; }).join('');
@@ -158,7 +164,7 @@
   }
   function renderItems(items, containerId, count, depth) {
     var html = items.length ? items.map(function (it, i) { return it.kind === 'split' ? splitBlock(it, i, count, depth) : itemRow(it, i, depth); }).join('') : '<div class="text-secondary small py-1">' + (containerId === 'root' ? '아래에서 모듈·흐름·분기점을 추가하세요.' : '이 분기에 넣을 모듈·흐름을 추가하세요.') + '</div>';
-    return '<div class="items-list" data-list="' + esc(containerId) + '">' + html + '</div>' + addBar(containerId, count, depth);
+    return '<div class="items-list" data-list="' + esc(containerId) + '">' + html + '</div>' + (state.editFlow && state.editFlow._view ? '' : addBar(containerId, count, depth));
   }
   function previewTable(f) {
     var ex = expandSafe(f.items, f.id);
@@ -179,22 +185,21 @@
     return html + '</tbody></table></div>';
   }
   function flowEditor(f) {
-    var isNew = !f.id;
-    return '<div class="card mb-3 border-primary" id="flow-form-card"><div class="card-header"><h3 class="card-title">' + (isNew ? '흐름 추가' : '흐름 수정: ' + esc(f.name)) + '</h3></div><div class="card-body"><form id="flow-form">'
+    var isNew = !f.id, view = !!f._view;
+    return '<div class="card mb-3 border-primary" id="flow-form-card"><div class="card-header"><h3 class="card-title">' + (view ? '흐름 보기: ' + esc(f.name) + ' <span class="text-secondary fw-normal small">(수정하려면 복사)</span>' : isNew ? '흐름 추가' : '흐름 수정: ' + esc(f.name)) + '</h3></div><div class="card-body"><form id="flow-form"><fieldset' + (view ? ' disabled' : '') + '>'
       + '<input type="hidden" name="flowId" value="' + esc(f.id || '') + '">'
       + '<div class="row g-2"><div class="col-md-3"><label class="form-label required">공정 분류</label><select class="form-select" name="domain">' + DOMAINS.map(function (d) { return '<option value="' + d.id + '"' + ((f.domain || state.domain || DOMAINS[0].id) === d.id ? ' selected' : '') + '>' + esc(d.label) + '</option>'; }).join('') + '</select></div>'
       + '<div class="col-md-5"><label class="form-label required">흐름 이름</label><input type="text" class="form-control" name="name" required value="' + esc(f.name || '') + '" autocomplete="off" placeholder="예: MoS2 백게이트 FET"></div>'
       + '<div class="col-md-4"><label class="form-label">소자 · 대상</label><input type="text" class="form-control" name="device" value="' + esc(f.device || '') + '" autocomplete="off"></div></div>'
       + '<div class="row g-2 mt-1"><div class="col-md-6"><label class="form-label">설명</label><input type="text" class="form-control" name="description" value="' + esc(f.description || '') + '" autocomplete="off"></div>'
-      + '<div class="col-6 col-md-3"><label class="form-label">기판 단위 라벨</label><input type="text" class="form-control" name="unitLabel" list="unit-labels" value="' + esc(f.unitLabel || '기판') + '" autocomplete="off"><datalist id="unit-labels">' + (CFG.unitLabels || []).map(function (u) { return '<option value="' + esc(u) + '">'; }).join('') + '</datalist></div>'
+      + '<div class="col-6 col-md-3"><label class="form-label">단위</label><select class="form-select" name="unitLabel">' + (CFG.unitLabels || []).map(function (u) { return '<option value="' + esc(u) + '"' + ((f.unitLabel || '기판') === u ? ' selected' : '') + '>' + esc(u) + '</option>'; }).join('') + ((CFG.unitLabels || []).indexOf(f.unitLabel || '기판') < 0 ? '<option value="' + esc(f.unitLabel) + '" selected>' + esc(f.unitLabel) + '</option>' : '') + '</select></div>'
       + '<div class="col-6 col-md-3"><label class="form-label required">기본 수량 <span class="form-label-description">런에서 바꿀 수 있음</span></label><input type="number" class="form-control" name="unitCount" min="1" required value="' + (f.unitCount || 1) + '"></div></div>'
       + '<div class="row g-3 mt-2"><div class="col-lg-7"><div class="subheader mb-2">구성 (순서대로) <span class="text-secondary fw-normal">분기점 안의 분기마다 따로 흐름을 넣고, 분기점 뒤에 넣는 항목은 합쳐진 공정입니다</span></div>' + renderItems(f.items, 'root', f.unitCount || 1, 0) + '</div>'
-      + '<div class="col-lg-5"><div class="subheader mb-2">펼친 런시트 미리보기</div><div id="flow-preview">' + previewTable(f) + '</div></div></div>'
-      + '<div class="mt-4 d-flex gap-2"><button type="submit" class="btn btn-primary">' + (isNew ? '추가' : '저장') + '</button><button type="button" class="btn" data-action="flow-cancel">취소</button></div></form></div></div>';
+      + '<div class="col-lg-5"><div class="subheader mb-2">펼친 런시트 미리보기</div><div id="flow-preview">' + previewTable(f) + '</div></div></div></fieldset>'
+      + '<div class="mt-4 d-flex gap-2">' + (view ? '<button type="button" class="btn btn-primary" data-action="flow-copy" data-id="' + esc(f.id) + '"><i class="ti ti-copy me-1"></i>복사해서 내 흐름으로</button>' : '<button type="submit" class="btn btn-primary">' + (isNew ? '추가' : '저장') + '</button>') + '<button type="button" class="btn" data-action="flow-cancel">' + (view ? '닫기' : '취소') + '</button></div></form></div></div>';
   }
-  /* DOM 의 입력값을 편집 중인 흐름(트리)에 반영 */
   function syncFromDom() {
-    var f = state.editFlow, form = $('#flow-form'); if (!f || !form) return;
+    var f = state.editFlow, form = $('#flow-form'); if (!f || !form || f._view) return;
     var v = readForm(form); f.domain = v.domain; f.name = v.name; f.device = v.device; f.description = v.description; f.unitLabel = v.unitLabel; f.unitCount = Math.max(1, Math.round(Number(v.unitCount)) || 1);
     $all('.flow-item[data-item]', form).forEach(function (row) { var loc = locateItem(f.items, row.getAttribute('data-item')); if (!loc) return; loc.node.label = row.querySelector('[data-f="label"]').value; loc.node.note = row.querySelector('[data-f="note"]').value; });
     $all('.split-block[data-item]', form).forEach(function (blk) { var loc = locateItem(f.items, blk.getAttribute('data-item')); if (!loc) return; var inp = blk.querySelector(':scope > .split-head [data-f="splitName"]'); if (inp) loc.node.name = inp.value; });
@@ -221,6 +226,7 @@
       it.params = diff; return it;
     });
   }
+  function copyOf(src, kind) { var cp = JSON.parse(JSON.stringify(src)); delete cp.id; delete cp.createdAt; delete cp.seed; delete cp.ownerId; delete cp.ownerName; delete cp._view; cp.name = src.name + ' (복사)'; if (kind === 'flow') (function reid(items) { items.forEach(function (it) { it.id = uid(); if (it.kind === 'split') it.branches.forEach(function (b) { b.id = uid(); reid(b.items); }); }); })(cp.items); return cp; }
 
   /* ---------- 이벤트 ---------- */
   function handleError(err) { console.error(err); toast(err && err.message ? err.message : String(err), true); }
@@ -231,7 +237,10 @@
     if (e.target.id === 'mod-q') { state.q = e.target.value; render(); var q = $('#mod-q'); if (q) { q.focus(); q.setSelectionRange(q.value.length, q.value.length); } return; }
     if (e.target.closest('#flow-form') && (e.target.name === 'unitCount' || e.target.name === 'unitLabel' || e.target.getAttribute('data-f') === 'bcount' || e.target.getAttribute('data-f') === 'bname')) { syncFromDom(); var pv = $('#flow-preview'); if (pv) pv.innerHTML = previewTable(state.editFlow); }
   });
-  document.addEventListener('change', function (e) { if (e.target.closest('#flow-form') && e.target.name === 'domain') { rerender(); } });
+  document.addEventListener('change', function (e) {
+    if (e.target.closest('#flow-form') && (e.target.name === 'domain' || e.target.name === 'unitLabel')) { rerender(); return; }
+    if (e.target.getAttribute('data-action') === 'mine-only') { state.mineOnly = e.target.checked; state.editModule = null; state.editFlow = null; render(); }
+  });
   document.addEventListener('submit', function (e) {
     var fid = e.target.getAttribute && e.target.getAttribute('id');
     if (fid === 'module-form') {
@@ -255,19 +264,19 @@
     var action = el.getAttribute('data-action'), id = el.getAttribute('data-id'), f = state.editFlow;
     switch (action) {
       case 'domain': state.domain = el.getAttribute('data-domain') || ''; state.editModule = null; state.editFlow = null; render(); break;
-      /* 모듈 */
       case 'mod-new': state.editModule = { fields: [], checklist: [], domain: state.domain || DOMAINS[0].id }; render(); scrollTo('#mod-form-card'); break;
       case 'mod-edit': state.editModule = JSON.parse(JSON.stringify(modById(id))); render(); scrollTo('#mod-form-card'); break;
-      case 'mod-copy': { var src = modById(id); if (!src) break; var cp = JSON.parse(JSON.stringify(src)); delete cp.id; delete cp.createdAt; cp.name = src.name + ' (복제)'; state.editModule = cp; render(); scrollTo('#mod-form-card'); break; }
+      case 'mod-view': state.editModule = Object.assign(JSON.parse(JSON.stringify(modById(id))), { _view: true }); render(); scrollTo('#mod-form-card'); break;
+      case 'mod-copy': { var src = modById(id); if (!src) break; state.editModule = copyOf(src, 'module'); render(); scrollTo('#mod-form-card'); toast('복사본을 편집 중입니다. 저장하면 내 모듈이 됩니다.'); break; }
       case 'mod-cancel': state.editModule = null; render(); break;
       case 'mod-delete': { var md = modById(id); if (!md) break; var mu = moduleUsage(id); confirmDlg({ title: '모듈 삭제', message: '"' + md.name + '" 모듈을 삭제할까요?' + (mu.flows.length || mu.runs ? ' 흐름 ' + mu.flows.length + '개 · 런 ' + mu.runs + '개에서 쓰고 있어 삭제 대신 비활성화됩니다.' : ''), okLabel: '삭제', danger: true }).then(function (ok) { if (!ok) return; return store.deleteModule(id).then(function (r) { toast(r && r.deactivated ? '사용 중이라 비활성화했습니다.' : '삭제했습니다.'); return refresh(); }); }).catch(handleError); break; }
       case 'field-add': { var rows = $('#field-rows'); if (rows) { rows.insertAdjacentHTML('beforeend', P.fieldRowHtml({})); var last = rows.lastElementChild.querySelector('[data-f="label"]'); if (last) last.focus(); } break; }
       case 'field-remove': { var fr = el.closest('[data-row]'); if (fr) fr.remove(); break; }
       case 'field-up': case 'field-down': { var row = el.closest('[data-row]'); if (!row) break; if (action === 'field-up' && row.previousElementSibling) row.parentNode.insertBefore(row, row.previousElementSibling); if (action === 'field-down' && row.nextElementSibling) row.parentNode.insertBefore(row.nextElementSibling, row); break; }
-      /* 흐름 */
       case 'flow-new': state.editFlow = { items: [], domain: state.domain || DOMAINS[0].id, unitLabel: '기판', unitCount: 1 }; render(); scrollTo('#flow-form-card'); break;
       case 'flow-edit': { var fe = flowById(id); if (!fe) break; state.editFlow = JSON.parse(JSON.stringify(fe)); render(); scrollTo('#flow-form-card'); break; }
-      case 'flow-copy': { var fs = flowById(id); if (!fs) break; var fc = JSON.parse(JSON.stringify(fs)); delete fc.id; delete fc.createdAt; fc.name = fs.name + ' (복제)'; (function reid(items) { items.forEach(function (it) { it.id = uid(); if (it.kind === 'split') it.branches.forEach(function (b) { b.id = uid(); reid(b.items); }); }); })(fc.items); state.editFlow = fc; render(); scrollTo('#flow-form-card'); break; }
+      case 'flow-view': { var fv = flowById(id); if (!fv) break; state.editFlow = Object.assign(JSON.parse(JSON.stringify(fv)), { _view: true }); render(); scrollTo('#flow-form-card'); break; }
+      case 'flow-copy': { var fs = flowById(id); if (!fs) break; state.editFlow = copyOf(fs, 'flow'); render(); scrollTo('#flow-form-card'); toast('복사본을 편집 중입니다. 저장하면 내 흐름이 됩니다.'); break; }
       case 'flow-cancel': state.editFlow = null; render(); break;
       case 'flow-delete': { var fd = flowById(id); if (!fd) break; var fu = flowUsage(id); if (fu.flows.length) { toast('"' + fu.flows.map(function (x) { return x.name; }).join(', ') + '" 흐름이 이 흐름을 포함하고 있어 삭제할 수 없습니다.', true); break; } confirmDlg({ title: '흐름 삭제', message: '"' + fd.name + '" 흐름을 삭제할까요?' + (fu.runs ? ' 이미 만들어진 런 ' + fu.runs + '개는 그대로 남습니다.' : ''), okLabel: '삭제', danger: true }).then(function (ok) { if (!ok) return; return store.deleteFlow(id).then(function () { toast('삭제했습니다.'); return refresh(); }); }).catch(handleError); break; }
       case 'item-add-module': { var c = el.getAttribute('data-container'); var sel = $('#am-' + c); if (!sel || !sel.value || !f) break; syncFromDom(); var lst = findList(f.items, c, f.unitCount); if (!lst) break; lst.items.push({ id: uid(), kind: 'module', refId: sel.value, label: '', note: '', params: {} }); rerender(); break; }
@@ -282,6 +291,8 @@
   });
   window.addEventListener('hashchange', function () { readHash(); state.editModule = null; state.editFlow = null; render(); });
 
-  store.init().then(function () { state.ready = true; readHash(); store.onChange(function () { reload().then(function () { if (!state.editModule && !state.editFlow) render(); }).catch(handleError); }); return refresh(); })
-    .catch(function (err) { state.error = err && err.message ? err.message : String(err); render(); });
+  store.init().then(function () {
+    if (!store.getSession()) { window.location.replace('../index.html?next=library'); return; }
+    state.ready = true; readHash(); store.onChange(function () { reload().then(function () { if (!state.editModule && !state.editFlow) render(); }).catch(handleError); }); return refresh();
+  }).catch(function (err) { state.error = err && err.message ? err.message : String(err); render(); });
 })();
