@@ -8,20 +8,20 @@
 --   4. Project Settings > API 의 URL 과 anon key 를 assets/js/config.js 에 입력, backend: 'supabase'
 --
 -- 로그인이 없는 앱입니다. anon 키로 읽고 쓰므로 "주소 + anon 키를 아는 사람 = 사용자" 입니다.
--- 연구실 내부용으로만 쓰고, 외부에 주소를 알리지 마세요. 삭제는 modules/flows/runs 만 가능하고
--- run_logs(변경 이력)는 추가만 됩니다.
+-- 연구실 내부용으로만 쓰고, 외부에 주소를 알리지 마세요. run_logs(변경 이력)는 추가만 됩니다.
 --
 -- 구조
---   modules  : 공정 모듈. fields(JSON) = 조건 항목 정의 [{key,label,type,unit,options,required,default}], checklist(JSON)
---   flows    : 공정 흐름. items(JSON) = [{id, kind:'module'|'flow', refId, label, note, params}]
---   runs     : 런. steps(JSON) 에 스텝 전체(계획·실제 조건, 상태, 작업자, 시각, 결과, 사진 키)를 담음
---   run_logs : 변경 이력 (작업 로그 + 시트 수정). 추가만.
+--   modules  : 공정 모듈. domain(device|package), fields(JSON) = 조건 항목 정의, checklist(JSON)
+--   flows    : 공정 흐름. items(JSON) = [{kind:'module'|'flow', refId, label, note, params} | {kind:'split', name, branches:[{id,name,count,items}]}]
+--   runs     : 런. team/owner/domain, 기판 라벨·수량·이름, tree(JSON: 스텝 참조·분기점), steps(JSON: 스텝 전체)
+--   run_logs : 변경 이력 (작업 로그 + 시트 수정). who/team/date 로 이력 페이지에서 묶어 봄. 추가만.
 -- =====================================================================
 
 create extension if not exists "pgcrypto";
 
 create table if not exists public.modules (
   id           text primary key,
+  domain       text not null default 'device',
   name         text not null,
   category     text not null default 'etc',
   equipment    text not null default '',
@@ -33,37 +33,57 @@ create table if not exists public.modules (
   created_at   timestamptz not null default now(),
   updated_at   timestamptz not null default now()
 );
+alter table public.modules add column if not exists domain text not null default 'device';
 
 create table if not exists public.flows (
   id           text primary key,
+  domain       text not null default 'device',
   name         text not null,
   device       text not null default '',
   description  text not null default '',
+  unit_label   text not null default '기판',
+  unit_count   integer not null default 1,
   items        jsonb not null default '[]'::jsonb,
   active       boolean not null default true,
   created_at   timestamptz not null default now(),
   updated_at   timestamptz not null default now()
 );
+alter table public.flows add column if not exists domain text not null default 'device';
+alter table public.flows add column if not exists unit_label text not null default '기판';
+alter table public.flows add column if not exists unit_count integer not null default 1;
 
 create table if not exists public.runs (
   id           text primary key,
   code         text not null,
+  domain       text not null default 'device',
+  team         text not null default '',
+  owner        text not null default '',
   title        text not null,
   flow_id      text,
   flow_name    text not null default '',
   sample       text not null default '',
-  owner        text not null default '',
   substrate    text not null default '',
   goal         text not null default '',
   note         text not null default '',
+  unit_label   text not null default '기판',
+  unit_count   integer not null default 1,
+  units        jsonb not null default '[]'::jsonb,
+  tree         jsonb not null default '[]'::jsonb,
+  steps        jsonb not null default '[]'::jsonb,
   status       text not null default 'active' check (status in ('active', 'paused', 'done', 'aborted')),
   started_at   timestamptz,
   ended_at     timestamptz,
-  steps        jsonb not null default '[]'::jsonb,
   created_at   timestamptz not null default now(),
   updated_at   timestamptz not null default now()
 );
+alter table public.runs add column if not exists domain text not null default 'device';
+alter table public.runs add column if not exists team text not null default '';
+alter table public.runs add column if not exists unit_label text not null default '기판';
+alter table public.runs add column if not exists unit_count integer not null default 1;
+alter table public.runs add column if not exists units jsonb not null default '[]'::jsonb;
+alter table public.runs add column if not exists tree jsonb not null default '[]'::jsonb;
 create index if not exists runs_status_idx on public.runs (status, updated_at desc);
+create index if not exists runs_team_idx on public.runs (team, domain);
 create unique index if not exists runs_code_key on public.runs (code);
 
 create table if not exists public.run_logs (
@@ -72,13 +92,20 @@ create table if not exists public.run_logs (
   step_id      text,
   seq          integer,
   step_name    text not null default '',
+  branch       text not null default '',
   who          text not null default '',
+  team         text not null default '',
   action       text not null,
   detail       text not null default '',
+  date         date,
   created_at   timestamptz not null default now()
 );
+alter table public.run_logs add column if not exists branch text not null default '';
+alter table public.run_logs add column if not exists team text not null default '';
+alter table public.run_logs add column if not exists date date;
 create index if not exists run_logs_run_idx on public.run_logs (run_id, created_at desc);
 create index if not exists run_logs_created_idx on public.run_logs (created_at desc);
+create index if not exists run_logs_team_idx on public.run_logs (team, who, date);
 
 -- ---------------------------------------------------------------------
 -- RLS: anon / authenticated 모두 읽기·쓰기 (로그인 없는 내부 도구). 이력은 삭제·수정 불가.
@@ -98,9 +125,7 @@ drop policy if exists "logs: read" on public.run_logs;
 create policy "logs: read" on public.run_logs for select to anon, authenticated using (true);
 drop policy if exists "logs: insert" on public.run_logs;
 create policy "logs: insert" on public.run_logs for insert to anon, authenticated with check (true);
--- run_logs 에 update/delete 정책 없음 = 추가만 가능
 
--- updated_at 자동 갱신
 create or replace function public.touch_updated_at() returns trigger language plpgsql as $$
 begin new.updated_at := now(); return new; end; $$;
 drop trigger if exists modules_touch on public.modules;
@@ -110,9 +135,6 @@ create trigger flows_touch before update on public.flows for each row execute pr
 drop trigger if exists runs_touch on public.runs;
 create trigger runs_touch before update on public.runs for each row execute procedure public.touch_updated_at();
 
--- ---------------------------------------------------------------------
--- realtime
--- ---------------------------------------------------------------------
 do $$ begin alter publication supabase_realtime add table public.runs;    exception when duplicate_object then null; end $$;
 do $$ begin alter publication supabase_realtime add table public.modules; exception when duplicate_object then null; end $$;
 do $$ begin alter publication supabase_realtime add table public.flows;   exception when duplicate_object then null; end $$;

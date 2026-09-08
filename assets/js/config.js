@@ -13,7 +13,13 @@ window.DSIL_CONFIG = {
   supabaseUrl: '',
   supabaseAnonKey: '',
 
-  /* 공정 모듈 분류. id 는 저장 키이므로 운영 중에 바꾸지 마세요. color 는 Tabler 색 이름. */
+  /* 공정 분류(대분류). 모듈·흐름·런이 모두 이 중 하나에 속합니다. id 는 저장 키. */
+  domains: [
+    { id: 'device',  label: '반도체 소자 공정', short: '소자',   icon: 'cpu' },
+    { id: 'package', label: '패키징 공정',      short: '패키징', icon: 'package' }
+  ],
+
+  /* 공정 모듈 세부 분류. id 는 저장 키이므로 운영 중에 바꾸지 마세요. color 는 Tabler 색 이름. */
   categories: [
     { id: 'clean',    label: '세정 · 준비',   color: 'blue' },
     { id: 'growth',   label: '성장 · 합성',   color: 'green' },
@@ -23,21 +29,32 @@ window.DSIL_CONFIG = {
     { id: 'etch',     label: '식각 · 리프트오프', color: 'red' },
     { id: 'thermal',  label: '열처리',        color: 'yellow' },
     { id: 'meas',     label: '측정 · 검사',   color: 'cyan' },
+    { id: 'assembly', label: '조립 · 본딩',   color: 'indigo' },
+    { id: 'encap',    label: '몰딩 · 봉지',   color: 'lime' },
+    { id: 'reliab',   label: '신뢰성',        color: 'pink' },
     { id: 'etc',      label: '기타',          color: 'secondary' }
   ],
+
+  /* 팀 이름 제안 목록(자유 입력 가능). 런·기록에 쓰인 팀은 자동으로 목록에 더해집니다. */
+  teams: ['2D 소자팀', '메모리 소자팀', '패키징팀', '측정·분석팀'],
+
+  /* 기판 단위 라벨 제안(자유 입력 가능): 런마다 "기판 4개", "웨이퍼 2장" 처럼 정합니다. */
+  unitLabels: ['기판', '웨이퍼', '샘플', '칩', '다이', '패키지'],
 
   /* 런 코드: <prefix>-YYMMDD-NN (그날 몇 번째 런인지) */
   runCodePrefix: 'R',
 
-  /* 처음 열 때 assets/data/library.js 의 예시 모듈·공정 흐름(MoS2 소자 공정)을 라이브러리에 넣을지.
-     이미 같은 id 가 있으면 건드리지 않습니다. false 면 빈 라이브러리로 시작합니다. */
+  /* 처음 열 때 assets/data/library.js 의 예시 모듈·공정 흐름을 라이브러리에 넣을지. 같은 id 가 있으면 건드리지 않습니다. */
   seedLibrary: true,
 
   /* 스텝 사진: 브라우저에서 긴 변 maxEdge 픽셀 JPEG 로 줄여 저장 (local: IndexedDB, supabase: Storage 버킷 run-photos) */
   photo: { maxEdge: 1400, quality: 0.85, maxPerStep: 6 },
 
   /* 홈 화면 최근 활동 표시 개수 */
-  recentLogs: 15,
+  recentLogs: 20,
+
+  /* PPT 출력: 16:9 한 장에 스플릿 표(열 = 기판, 행 = 공정)로 맞춤 */
+  pptx: { fontFace: 'Malgun Gothic', minFontPt: 5, maxFontPt: 10 },
 
   portalUrl: 'https://mhparkunist-del.github.io/dsil-portal/',
   labName: 'Device-to-System Integration Lab (DSIL)',
