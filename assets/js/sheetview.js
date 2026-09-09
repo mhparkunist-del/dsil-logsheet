@@ -134,6 +134,68 @@
   document.addEventListener('change', function (e) { var f = e.target.closest && e.target.closest('#modal-form'); if (f) refreshPreview(f); });
   document.addEventListener('input', function (e) { var f = e.target.closest && e.target.closest('#modal-form'); if (f && /^bcount_/.test(e.target.name || '')) refreshPreview(f); });
 
+  /* ---------- 한 행의 분기별 조건 한 번에 (열 = 분기, 행 = 조건 항목) ----------
+     cols: [{ id: leafId, label, present, locked, lockedText, name, fields, values, modName, moduleId }]
+     o: { intro, sharedFields, sharedModuleId, sharedModName, sharedDefaults }  sharedFields 가 있으면 매트릭스, 없으면 분기별 카드 */
+  function fmtV(v) { return v === undefined || v === null ? '' : String(v); }
+  function condInput(f, name, v, disabled) {
+    var dis = disabled ? ' disabled' : '';
+    if (f.type === 'select') return '<select class="form-select form-select-sm" name="' + name + '"' + dis + '><option value="">-</option>' + (f.options || []).map(function (o) { return '<option value="' + esc(o) + '"' + (fmtV(v) === o ? ' selected' : '') + '>' + esc(o) + '</option>'; }).join('') + (fmtV(v) !== '' && (f.options || []).indexOf(fmtV(v)) < 0 ? '<option value="' + esc(v) + '" selected>' + esc(v) + '</option>' : '') + '</select>';
+    if (f.type === 'check') return '<label class="form-check mb-0 d-inline-block"><input class="form-check-input" type="checkbox" name="' + name + '"' + (v === true || v === 'true' || v === '예' ? ' checked' : '') + dis + '></label>';
+    if (f.type === 'textarea') return '<textarea class="form-control form-control-sm" name="' + name + '" rows="2"' + dis + '>' + esc(fmtV(v)) + '</textarea>';
+    return '<input class="form-control form-control-sm" type="' + (f.type === 'number' ? 'number' : 'text') + '"' + (f.type === 'number' ? ' step="any"' : '') + ' name="' + name + '" value="' + esc(fmtV(v)) + '" autocomplete="off"' + dis + '>';
+  }
+  function rowCondBody(cols, o) {
+    o = o || {};
+    var html = o.intro ? '<div class="text-secondary small mb-2">' + o.intro + '</div>' : '';
+    if (o.sharedFields) {
+      html += '<div class="table-responsive"><table class="table table-sm table-bordered cond-matrix mb-2"><thead><tr><th class="cond-label"></th>' + cols.map(function (c) { return '<th class="text-center"><div class="fw-bold">' + esc(c.label) + '</div><div class="small text-secondary fw-normal">' + (c.present ? esc(c.modName || '') + (c.locked ? ' · ' + esc(c.lockedText || '진행됨') : '') : '건너뜀') + '</div></th>'; }).join('') + '</tr></thead><tbody>';
+      html += '<tr><th class="cond-label">스텝 이름</th>' + cols.map(function (c) { return '<td>' + (c.present ? '<input class="form-control form-control-sm" name="l_' + esc(c.id) + '__name" value="' + esc(c.name || '') + '" autocomplete="off"' + (c.locked ? ' disabled' : '') + '>' : '<label class="form-check mb-0"><input class="form-check-input" type="checkbox" name="l_' + esc(c.id) + '__fill"><span class="form-check-label small">채우기 (' + esc(o.sharedModName || '') + ')</span></label>') + '</td>'; }).join('') + '</tr>';
+      o.sharedFields.forEach(function (f) { html += '<tr><th class="cond-label">' + esc(f.label) + (f.unit ? ' <span class="text-secondary fw-normal">' + esc(f.unit) + '</span>' : '') + (f.required ? ' <span class="text-red">*</span>' : '') + '</th>' + cols.map(function (c) { return '<td>' + condInput(f, 'l_' + c.id + '__p_' + f.key, c.present ? (c.values || {})[f.key] : (o.sharedDefaults || {})[f.key], c.present && c.locked) + '</td>'; }).join('') + '</tr>'; });
+      html += '<tr><th class="cond-label">이 행 건너뜀</th>' + cols.map(function (c) { return '<td class="text-center">' + (c.present && !c.locked ? '<label class="form-check mb-0 d-inline-block"><input class="form-check-input" type="checkbox" name="l_' + esc(c.id) + '__skip"></label>' : '<span class="text-secondary">-</span>') + '</td>'; }).join('') + '</tr>';
+      html += '</tbody></table></div><button type="button" class="btn btn-sm" data-action="cond-copy-first"><i class="ti ti-copy me-1"></i>첫 분기 값을 모든 분기에 복사</button>';
+    } else {
+      html += cols.map(function (c) {
+        if (!c.present) return '<div class="card card-sm mb-2"><div class="card-body py-2"><b>' + esc(c.label) + '</b> <span class="text-secondary">건너뜀 — 채우려면 표에서 이 칸의 "+ 모듈" 버튼</span></div></div>';
+        return '<div class="card card-sm mb-2"><div class="card-header py-2 d-flex align-items-center"><b>' + esc(c.label) + '</b><span class="text-secondary ms-2">' + esc(c.modName || '') + '</span>' + (c.locked ? '<span class="badge bg-secondary-lt ms-2">' + esc(c.lockedText || '진행됨') + '</span>' : '<label class="form-check mb-0 ms-auto"><input class="form-check-input" type="checkbox" name="l_' + esc(c.id) + '__skip"><span class="form-check-label">이 행 건너뜀</span></label>') + '</div>'
+          + '<div class="card-body py-2"><div class="row g-2"><div class="col-12"><label class="form-label mb-1">스텝 이름</label><input class="form-control form-control-sm" name="l_' + esc(c.id) + '__name" value="' + esc(c.name || '') + '" autocomplete="off"' + (c.locked ? ' disabled' : '') + '></div>'
+          + (c.fields || []).map(function (f) { return '<div class="' + (f.type === 'textarea' ? 'col-12' : 'col-6 col-md-4') + '"><label class="form-label mb-1">' + esc(f.label) + (f.unit ? ' <span class="text-secondary">' + esc(f.unit) + '</span>' : '') + '</label>' + condInput(f, 'l_' + c.id + '__p_' + f.key, (c.values || {})[f.key], c.locked) + '</div>'; }).join('') + '</div></div></div>';
+      }).join('');
+    }
+    return html;
+  }
+  /* 폼 값 → { leafId: {skip:true} | {fill:true, moduleId, params} | {name, params} } */
+  function readRowCond(v, cols, o) {
+    var out = {};
+    cols.forEach(function (c) {
+      var pre = 'l_' + c.id + '__';
+      if (c.present) {
+        if (c.locked) return;
+        if (v[pre + 'skip']) { out[c.id] = { skip: true }; return; }
+        var params = {}; (c.fields || []).forEach(function (f) { var x = v[pre + 'p_' + f.key]; if (x !== undefined) params[f.key] = x; });
+        out[c.id] = { name: v[pre + 'name'], params: params };
+      } else if (o && o.sharedFields && v[pre + 'fill']) {
+        var p2 = {}; o.sharedFields.forEach(function (f) { var x = v[pre + 'p_' + f.key]; if (x !== undefined) p2[f.key] = x; });
+        out[c.id] = { fill: true, moduleId: o.sharedModuleId, params: p2 };
+      }
+    });
+    return out;
+  }
+  document.addEventListener('click', function (e) {
+    var b = e.target.closest('[data-action="cond-copy-first"]'); if (!b) return;
+    var form = b.closest('form'), tbl = form && form.querySelector('.cond-matrix'); if (!tbl) return;
+    $all('tbody tr', tbl).forEach(function (tr) {
+      var tds = $all('td', tr); if (tds.length < 2) return;
+      var src = tds[0].querySelector('input:not([type="checkbox"]),select,textarea'), srcCb = tds[0].querySelector('input[type="checkbox"]:not([name$="__skip"]):not([name$="__fill"])');
+      tds.slice(1).forEach(function (td) {
+        var el = td.querySelector('input:not([type="checkbox"]),select,textarea'), cb = td.querySelector('input[type="checkbox"]:not([name$="__skip"]):not([name$="__fill"])');
+        if (src && el && !el.disabled && !/__name$/.test(el.name)) el.value = src.value;
+        if (srcCb && cb && !cb.disabled) cb.checked = srcCb.checked;
+      });
+    });
+    U.toast('첫 분기의 조건을 모든 분기에 복사했습니다. 저장을 눌러야 반영됩니다.');
+  });
+
   /* 분기 행 추가·삭제 버튼 (대화상자 안) */
   document.addEventListener('click', function (e) {
     var el = e.target.closest('[data-action="brow-add"],[data-action="brow-remove"]'); if (!el) return;
@@ -150,5 +212,5 @@
     var form = box.closest('form'); if (form) refreshPreview(form);
   });
 
-  window.DSILSheetView = { table: table, columns: columns, spanOf: spanOf, customUnitNames: customUnitNames, branchRows: branchRows, readBranches: readBranches, rowOptions: rowOptions, leafLabel: leafLabel, splitAddBody: splitAddBody, readSplitAdd: readSplitAdd, splitEditBody: splitEditBody, readSplitEdit: readSplitEdit };
+  window.DSILSheetView = { table: table, columns: columns, spanOf: spanOf, customUnitNames: customUnitNames, rowCondBody: rowCondBody, readRowCond: readRowCond, branchRows: branchRows, readBranches: readBranches, rowOptions: rowOptions, leafLabel: leafLabel, splitAddBody: splitAddBody, readSplitAdd: readSplitAdd, splitEditBody: splitEditBody, readSplitEdit: readSplitEdit };
 })();

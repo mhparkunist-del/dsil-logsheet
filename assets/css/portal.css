@@ -76,6 +76,11 @@ html { color-scheme: light; }
 .split-table.sheet-editor td { padding: 0.4rem 0.5rem; font-size: 0.85rem; }
 .split-table.sheet-editor th.step-col, .split-table.sheet-editor td.cell-rowhead { width: 11rem; }
 .min-w-0 { min-width: 0; }
+/* 분기별 조건 매트릭스 (열 = 분기, 행 = 조건 항목) */
+.cond-matrix th.cond-label { width: 9rem; white-space: nowrap; background: #f8fafc; font-weight: 600; vertical-align: middle; }
+.cond-matrix thead th { background: #e5ecf6; color: #004191; vertical-align: bottom; min-width: 9rem; }
+.cond-matrix td { padding: 0.2rem 0.3rem; min-width: 9rem; vertical-align: middle; }
+.cond-matrix .form-check { justify-content: center; }
 .step-cell .subheader { font-size: 0.65rem; margin-bottom: 0.1rem; }
 .param-cell { font-size: 0.8rem; }
 .param-list { line-height: 1.45; }

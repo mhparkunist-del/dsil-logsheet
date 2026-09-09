@@ -154,9 +154,9 @@
   function editorTable(f) {
     var view = !!f._view;
     return SV.table(f, { unitLabel: f.unitLabel, tableClass: 'table table-bordered split-table sheet-editor',
-      rowHead: function (row, i) {
+      rowHead: function (row, i, leaves) {
         var html = '<div class="d-flex gap-2 align-items-start"><span class="step-num">' + (i + 1) + '</span><div class="flex-fill min-w-0"><div class="fw-bold row-name">' + esc(row.name || '(이름 없음)') + '</div><div>' + P.catBadge(row.category) + '</div>' + (row.note ? '<div class="small text-secondary"><i class="ti ti-note"></i> ' + esc(row.note) + '</div>' : '') + '</div></div>';
-        if (!view) html += '<div class="d-flex flex-wrap gap-1 mt-1"><button type="button" class="btn btn-sm btn-ghost-secondary btn-icon" data-action="fe-row-insert" data-index="' + i + '" title="이 앞에 행"><i class="ti ti-row-insert-top"></i></button><button type="button" class="btn btn-sm btn-ghost-secondary btn-icon" data-action="fe-row-move" data-id="' + esc(row.id) + '" data-dir="up"' + (i === 0 ? ' disabled' : '') + '><i class="ti ti-chevron-up"></i></button><button type="button" class="btn btn-sm btn-ghost-secondary btn-icon" data-action="fe-row-move" data-id="' + esc(row.id) + '" data-dir="down"' + (i === f.rows.length - 1 ? ' disabled' : '') + '><i class="ti ti-chevron-down"></i></button><button type="button" class="btn btn-sm btn-ghost-primary btn-icon" data-action="fe-row-edit" data-id="' + esc(row.id) + '" title="대분류·이름·메모"><i class="ti ti-pencil"></i></button><button type="button" class="btn btn-sm btn-ghost-secondary btn-icon text-purple" data-action="fe-split-add" data-row="' + esc(row.id) + '" title="이 행부터 분기점"' + (f.unitCount < 2 ? ' disabled' : '') + '><i class="ti ti-git-branch"></i></button>' + (canCloseAt(f, i) ? '<button type="button" class="btn btn-sm btn-ghost-secondary btn-icon text-primary" data-action="fe-split-close" data-row="' + esc(row.id) + '" title="이 행부터 공통 (앞 행에서 분기 합침)"><i class="ti ti-arrows-join"></i></button>' : '') + '<button type="button" class="btn btn-sm btn-ghost-danger btn-icon" data-action="fe-row-remove" data-id="' + esc(row.id) + '" title="행 삭제"><i class="ti ti-x"></i></button></div>';
+        if (!view) html += '<div class="d-flex flex-wrap gap-1 mt-1"><button type="button" class="btn btn-sm btn-ghost-secondary btn-icon" data-action="fe-row-insert" data-index="' + i + '" title="이 앞에 행"><i class="ti ti-row-insert-top"></i></button><button type="button" class="btn btn-sm btn-ghost-secondary btn-icon" data-action="fe-row-move" data-id="' + esc(row.id) + '" data-dir="up"' + (i === 0 ? ' disabled' : '') + '><i class="ti ti-chevron-up"></i></button><button type="button" class="btn btn-sm btn-ghost-secondary btn-icon" data-action="fe-row-move" data-id="' + esc(row.id) + '" data-dir="down"' + (i === f.rows.length - 1 ? ' disabled' : '') + '><i class="ti ti-chevron-down"></i></button><button type="button" class="btn btn-sm btn-ghost-primary btn-icon" data-action="fe-row-edit" data-id="' + esc(row.id) + '" title="대분류·이름·메모"><i class="ti ti-pencil"></i></button>' + (leaves && leaves.length > 1 ? '<button type="button" class="btn btn-sm btn-ghost-primary btn-icon" data-action="fe-row-cond" data-id="' + esc(row.id) + '" title="분기별 조건 한 번에 (분기 ' + leaves.length + '개)"><i class="ti ti-adjustments-horizontal"></i></button>' : '') + '<button type="button" class="btn btn-sm btn-ghost-secondary btn-icon text-purple" data-action="fe-split-add" data-row="' + esc(row.id) + '" title="이 행부터 분기점"' + (f.unitCount < 2 ? ' disabled' : '') + '><i class="ti ti-git-branch"></i></button>' + (canCloseAt(f, i) ? '<button type="button" class="btn btn-sm btn-ghost-secondary btn-icon text-primary" data-action="fe-split-close" data-row="' + esc(row.id) + '" title="이 행부터 공통 (앞 행에서 분기 합침)"><i class="ti ti-arrows-join"></i></button>' : '') + '<button type="button" class="btn btn-sm btn-ghost-danger btn-icon" data-action="fe-row-remove" data-id="' + esc(row.id) + '" title="행 삭제"><i class="ti ti-x"></i></button></div>';
         return html;
       },
       cell: cellRefHtml,
@@ -254,6 +254,28 @@
       return mutate(function (w) { var x = SH.findCell(w, cellId); x.cell.label = v.label; x.cell.note = v.note; x.cell.params = paramsDiff(mod, P.read(mod.fields, v)); });
     } });
   }
+  /* 한 행의 분기별 조건을 한 번에 (열 = 분기) */
+  function rowCondDialog(rowId) {
+    var f = state.editFlow, row = SH.rowById(f, rowId), i = SH.idx(f, rowId), leaves = SH.leavesAt(f, i);
+    var cols = leaves.map(function (l) { var c = row.cells[l.id], mod = c ? modById(c.moduleId) : null; return { id: l.id, label: (l.path.length ? l.path.join(' › ') : '공통') + ' (' + l.count + ' ' + f.unitLabel + ')', present: !!c, locked: false, name: c ? (c.label || '') : '', fields: mod ? mod.fields : [], values: mod ? Object.assign({}, S.defaults(mod.fields), c.params || {}) : {}, modName: c ? (mod ? mod.name : '(삭제된 모듈)') : '', moduleId: c ? c.moduleId : null }; });
+    var present = cols.filter(function (c) { return c.present; });
+    var sharedMod = present.length && present.every(function (c) { return c.moduleId === present[0].moduleId; }) ? modById(present[0].moduleId) : null;
+    var o = sharedMod ? { sharedFields: sharedMod.fields, sharedModuleId: sharedMod.id, sharedModName: sharedMod.name, sharedDefaults: S.defaults(sharedMod.fields) } : {};
+    o.intro = '<b>' + (i + 1) + '행 "' + esc(row.name) + '"</b> 의 분기 ' + leaves.length + '개 계획 조건을 한 번에 정합니다. 모듈 기본값과 다른 값만 흐름에 저장됩니다. ' + (sharedMod ? '비어 있는 분기는 "채우기"로 같은 모듈을 넣고, "이 행 건너뜀"으로 뺍니다.' : '분기마다 모듈이 달라 분기별로 나눠 보여 줍니다.');
+    return dialog({ title: '분기별 조건 · ' + (i + 1) + '. ' + row.name, bodyHtml: SV.rowCondBody(cols, o), okLabel: '적용', size: 'lg', submit: function (v) {
+      var ch = SV.readRowCond(v, cols, o);
+      return mutate(function (w) {
+        var wr = SH.rowById(w, rowId);
+        leaves.forEach(function (l) {
+          var x = ch[l.id]; if (!x) return;
+          if (x.skip) { SH.cellClear(w, rowId, l.id, S.always); return; }
+          if (x.fill) { SH.cellSet(w, rowId, l.id, { moduleId: x.moduleId, label: '', params: paramsDiff(sharedMod, x.params) }, S.refCell); return; }
+          var c = wr.cells[l.id], mod = modById(c.moduleId); c.label = x.name || ''; if (mod) c.params = paramsDiff(mod, x.params);
+        });
+        SH.validate(w, w.unitLabel);
+      });
+    } });
+  }
   function rowEditDialog(rowId) {
     var f = state.editFlow, row = SH.rowById(f, rowId);
     var body = '<div class="row g-2"><div class="col-md-4"><label class="form-label required">대분류</label>' + catSelect('category', row.category, false) + '</div><div class="col-md-8"><label class="form-label required">행 이름</label><input type="text" class="form-control" name="name" required value="' + esc(row.name) + '" autocomplete="off"></div></div><div class="mt-2"><label class="form-label">메모</label><input type="text" class="form-control" name="note" value="' + esc(row.note) + '" autocomplete="off"></div>';
@@ -336,6 +358,7 @@
       case 'fe-row-remove': { if (!f) break; tryMutate(function (w) { SH.rowRemove(w, id, S.always); }); break; }
       case 'fe-row-move': { if (!f) break; tryMutate(function (w) { SH.rowMove(w, id, el.getAttribute('data-dir')); }); break; }
       case 'fe-row-edit': { if (!f) break; syncFromDom(); rowEditDialog(id).catch(handleError); break; }
+      case 'fe-row-cond': { if (!f) break; syncFromDom(); rowCondDialog(id).catch(handleError); break; }
       case 'fe-cell-set': { if (!f) break; syncFromDom(); cellSetDialog(el.getAttribute('data-row'), el.getAttribute('data-leaf')).catch(handleError); break; }
       case 'fe-cell-clear': { if (!f) break; var rid = el.getAttribute('data-row'), lid = el.getAttribute('data-leaf'); tryMutate(function (w) { SH.cellClear(w, rid, lid, S.always); }); break; }
       case 'fe-cell-params': { if (!f) break; syncFromDom(); cellParamsDialog(id).catch(handleError); break; }

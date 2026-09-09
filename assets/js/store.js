@@ -293,6 +293,25 @@
     run.updatedAt = nowISO();
     return [logRec(run, { row: row, leaf: leaf }, me, 'sheet-cell', (leaf && leaf.name ? '분기 ' + leaf.path.join(' › ') + ': ' : '') + c.name + ' 뺌 (이 행 건너뜀)')];
   }
+  /* 한 행의 분기별 조건을 한 번에: changes = { leafId: {skip:true} | {fill:true, moduleId, name, params} | {name, params} } */
+  function opRowCells(run, ctx, rowId, changes, me) {
+    var row = SH.rowById(run, rowId); if (!row) fail('행을 찾을 수 없습니다.');
+    var i = SH.idx(run, rowId), leaves = SH.leavesAt(run, i), parts = [];
+    leaves.forEach(function (l) {
+      var ch = changes[l.id]; if (!ch) return;
+      var cur = row.cells[l.id], tag = l.path.length ? l.path.join(' › ') : '공통';
+      if (ch.skip) { if (cur) { SH.cellClear(run, rowId, l.id, pendingStep); parts.push(tag + ': ' + cur.name + ' 뺌(건너뜀)'); } return; }
+      if (!cur) { if (ch.fill && ch.moduleId) { var c = SH.cellSet(run, rowId, l.id, { moduleId: ch.moduleId, name: ch.name, params: ch.params }, runCellMaker(ctx)); parts.push(tag + ': ' + c.name + ' 채움' + (paramText(c.fields, c.planned) ? ' · ' + paramText(c.fields, c.planned) : '')); } return; }
+      if (!pendingStep(cur)) return;
+      var sub = [];
+      if (ch.name !== undefined && str(ch.name) && str(ch.name) !== cur.name) { sub.push('이름 ' + cur.name + ' → ' + str(ch.name)); cur.name = str(ch.name); }
+      if (ch.params !== undefined) { var np = cleanValues(cur.fields, ch.params); var d = diffParams(cur.fields, cur.planned, np); if (d) { sub.push(d); cur.planned = np; } }
+      if (sub.length) { cur.updatedAt = nowISO(); cur.updatedBy = str(me && me.name); parts.push(tag + ': ' + sub.join(', ')); }
+    });
+    if (!parts.length) return [];
+    SH.validate(run, run.unitLabel); run.updatedAt = nowISO();
+    return [logRec(run, { row: row }, me, 'sheet-edit', (i + 1) + '행 "' + row.name + '" 분기별 조건: ' + parts.join(' | '))];
+  }
   function opSplitAdd(run, o, me) {
     var s = SH.splitAdd(run, Object.assign({ unitLabel: run.unitLabel }, o), cloneStep, pendingStep); run.updatedAt = nowISO();
     var r = SH.range(run, s);
@@ -632,6 +651,7 @@
       rowEdit: function (runId, rowId, patch) { return wrap(function () { return mutate(runId, function (w) { return opRowEdit(w, rowId, patch || {}, me()); }); }); },
       cellSet: function (runId, rowId, leafId, spec) { return wrap(function () { return mutate(runId, function (w) { return opCellSet(w, ctx(), rowId, leafId, spec || {}, me()); }); }); },
       cellClear: function (runId, rowId, leafId) { return wrap(function () { return mutate(runId, function (w) { return opCellClear(w, rowId, leafId, me()); }); }); },
+      rowCells: function (runId, rowId, changes) { return wrap(function () { return mutate(runId, function (w) { return opRowCells(w, ctx(), rowId, changes || {}, me()); }); }); },
       splitAdd: function (runId, o) { return wrap(function () { return mutate(runId, function (w) { return opSplitAdd(w, o || {}, me()); }); }); },
       splitEdit: function (runId, splitId, patch) { return wrap(function () { return mutate(runId, function (w) { return opSplitEdit(w, splitId, patch || {}, me()); }); }); },
       splitRemove: function (runId, splitId) { return wrap(function () { return mutate(runId, function (w) { return opSplitRemove(w, splitId, me()); }); }); },
@@ -761,6 +781,7 @@
       rowEdit: function (runId, rowId, patch) { return mutate(runId, function (run) { return opRowEdit(run, rowId, patch || {}, me()); }); },
       cellSet: function (runId, rowId, leafId, spec) { return mutateCtx(runId, function (run, c) { return opCellSet(run, c, rowId, leafId, spec || {}, me()); }); },
       cellClear: function (runId, rowId, leafId) { return mutate(runId, function (run) { return opCellClear(run, rowId, leafId, me()); }); },
+      rowCells: function (runId, rowId, changes) { return mutateCtx(runId, function (run, c) { return opRowCells(run, c, rowId, changes || {}, me()); }); },
       splitAdd: function (runId, o) { return mutate(runId, function (run) { return opSplitAdd(run, o || {}, me()); }); },
       splitEdit: function (runId, splitId, patch) { return mutate(runId, function (run) { return opSplitEdit(run, splitId, patch || {}, me()); }); },
       splitRemove: function (runId, splitId) { return mutate(runId, function (run) { return opSplitRemove(run, splitId, me()); }); },
