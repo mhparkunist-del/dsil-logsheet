@@ -17,7 +17,8 @@
       document.head.appendChild(s);
     });
   }
-  function span(c) { return c.count > 1 ? { colspan: c.count } : {}; }
+  var COLS = null;
+  function span(c) { var s = COLS ? window.DSILSheetView.spanOf(COLS, c) : c.count; return s > 1 ? { colspan: s } : {}; }
   function headCell(lr, o, fs) {
     var small = Math.max(5, fs - 1);
     if (lr.type === 'split-head') return { text: [{ text: '분기점', options: { bold: true } }, { text: lr.split.name ? '  ' + lr.split.name : '', options: { fontSize: small } }], options: { fill: { color: 'F3E8F8' }, color: '6B2D86', valign: 'middle' } };
@@ -51,8 +52,9 @@
       var W = 13.333, H = 7.5, M = 0.3, headH = 0.5, footH = 0.25;
       slide.addText([{ text: run.code + '  ' + run.title, options: { bold: true, fontSize: 15, color: '004191' } }, { text: '   ' + (o.subtitle || ''), options: { fontSize: 9, color: '555555' } }],
         { x: M, y: 0.1, w: W - 2 * M, h: headH, valign: 'middle', fontFace: font });
-      var n = Math.max(1, run.unitCount), stepW = Math.min(2.2, Math.max(1.4, (W - 2 * M) * 0.16)), colW = (W - 2 * M - stepW) / n;
-      var units = run.units.slice(0, n); for (var i = 0; i < n; i++) if (!units[i]) units[i] = run.unitLabel + ' ' + (i + 1);
+      COLS = window.DSILSheetView.columns(run, lay, run.units, run.unitLabel);
+      var n = Math.max(1, COLS.length), stepW = Math.min(2.2, Math.max(1.4, (W - 2 * M) * 0.16)), colW = (W - 2 * M - stepW) / n;
+      var units = COLS.map(function (c) { return c.text; });
       var hdr = { bold: true, fill: { color: 'E5ECF6' }, color: '004191', align: 'center', valign: 'middle' };
       var trs = [[{ text: 'Step', options: hdr }].concat(units.map(function (u) { return { text: u, options: hdr }; }))];
       var total = 1 + lay.length;
@@ -63,6 +65,7 @@
       slide.addTable(trs, { x: M, y: headH + 0.15, w: W - 2 * M, colW: [stepW].concat(units.map(function () { return colW; })), rowH: rowH, fontSize: fs, fontFace: font,
         border: { type: 'solid', pt: 0.5, color: '9AA0A6' }, margin: 0.03, valign: 'middle', autoPage: false });
       slide.addText(o.footer || '', { x: M, y: H - footH - 0.05, w: W - 2 * M, h: footH, fontSize: 7, color: '777777', fontFace: font });
+      COLS = null;
       return pptx.writeFile({ fileName: o.fileName || ('runsheet_' + run.code + '.pptx') });
     });
   }

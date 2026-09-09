@@ -12,7 +12,7 @@
   var DOMAINS = CFG.domains || [{ id: 'device', label: '반도체 소자 공정', short: '소자' }, { id: 'package', label: '패키징 공정', short: '패키징' }];
   var PRESETS = [['7', '최근 7일'], ['30', '최근 30일'], ['90', '최근 90일'], ['year', '올해'], ['all', '전체']];
   var UNITS = CFG.unitLabels || ['기판', '웨이퍼', '샘플', '칩'];
-  var state = { ready: false, error: null, session: null, runs: [], archive: [], flows: [], modules: [], accounts: [], filter: { domain: '', preset: '90' }, next: null, autoNew: null };
+  var state = { ready: false, error: null, session: null, runs: [], archive: [], flows: [], modules: [], materials: [], accounts: [], filter: { domain: '', preset: '90' }, next: null, autoNew: null };
   (function () { try { var q = new URLSearchParams(window.location.search); state.next = q.get('next'); state.autoNew = q.get('new'); } catch (e) { /* ignore */ } })();
 
   function me() { return store.getMe(); }
@@ -34,9 +34,9 @@
 
   function reload() {
     state.session = store.getSession();
-    if (!state.session) { state.runs = []; state.archive = []; state.accounts = []; return Promise.all([store.listFlows(), store.listModules()]).then(function (r) { state.flows = r[0]; state.modules = r[1]; }); }
-    return Promise.all([store.listRuns({ scope: 'mine' }), store.listRuns({ scope: 'archive' }), store.listFlows(), store.listModules(), state.session.isAdmin ? store.listAccounts() : Promise.resolve([])])
-      .then(function (r) { state.runs = r[0]; state.archive = r[1]; state.flows = r[2]; state.modules = r[3]; state.accounts = r[4]; });
+    if (!state.session) { state.runs = []; state.archive = []; state.accounts = []; return Promise.all([store.listFlows(), store.listModules(), store.listMaterials()]).then(function (r) { state.flows = r[0]; state.modules = r[1]; state.materials = r[2]; }); }
+    return Promise.all([store.listRuns({ scope: 'mine' }), store.listRuns({ scope: 'archive' }), store.listFlows(), store.listModules(), state.session.isAdmin ? store.listAccounts() : Promise.resolve([]), store.listMaterials()])
+      .then(function (r) { state.runs = r[0]; state.archive = r[1]; state.flows = r[2]; state.modules = r[3]; state.accounts = r[4]; state.materials = r[5]; });
   }
 
   /* ---------- 상단 · 로그인 ---------- */
@@ -151,12 +151,20 @@
         + '<div class="row g-2">' + s.branches.map(function (b) { return '<div class="col-6 col-md-4"><div class="input-group input-group-sm"><input type="text" class="form-control" name="b_' + esc(b.id) + '_name" value="' + esc(b.name) + '" placeholder="분기 이름"><input type="number" class="form-control" name="b_' + esc(b.id) + '_count" value="' + b.count + '" min="1" style="max-width:5rem"><span class="input-group-text">' + esc(f.unitLabel) + '</span></div></div>'; }).join('') + '</div></div>';
     }).join('');
   }
+  /* 기판 · 재료: 라이브러리에 등록된 자주 쓰는 재료 드롭다운 + 직접 입력 */
+  function substrateSelect(dom, value) {
+    var list = state.materials.filter(function (m) { return m.active !== false && (!m.domain || m.domain === dom); });
+    var custom = !!value && !list.some(function (m) { return m.name === value; });
+    return '<select class="form-select" name="substrate"><option value=""' + (!value ? ' selected' : '') + '>선택 안 함</option>' + list.map(function (m) { return '<option value="' + esc(m.name) + '"' + (m.name === value ? ' selected' : '') + (m.description ? ' title="' + esc(m.description) + '"' : '') + '>' + esc(m.name) + '</option>'; }).join('') + '<option value="__custom"' + (custom ? ' selected' : '') + '>직접 입력…</option></select>'
+      + '<div data-show-if="substrate=__custom" class="mt-1"><input type="text" class="form-control" name="substrateCustom" placeholder="예: SiO2 285 nm / p++ Si" value="' + esc(custom ? value : '') + '" autocomplete="off"></div>';
+  }
+  function readSubstrate(v) { return v.substrate === '__custom' ? (v.substrateCustom || '') : (v.substrate || ''); }
   function flowBlock(dom, f) {
     var key = 'flowId_' + dom + '=' + (f ? f.id : '__empty'), st = f ? SH.stats(f) : null;
     return '<div data-show-if="' + esc(key) + '">' + (f ? '<div class="text-secondary small mt-1">' + esc(f.description || '') + (f.device ? ' · ' + esc(f.device) : '') + ' · ' + st.rows + '행 ' + st.cells + '스텝' + (st.splits ? ' · 분기점 ' + st.splits + '개' : '') + (f.seed ? ' · 기본 제공' : (f.ownerName ? ' · ' + esc(f.ownerName) : '')) + '</div>' : '<div class="text-secondary small mt-1">빈 런시트로 시작합니다. 런시트 화면의 <b>라이브러리에서 추가</b>로 모듈을 행으로 넣거나 흐름을 통째로 복사한 뒤 자유롭게 고칩니다.</div>')
       + '<div class="row g-2 mt-1"><div class="col-6 col-md-3"><label class="form-label">단위</label>' + unitSelect(f ? f.unitLabel : UNITS[0]) + '</div>'
       + '<div class="col-6 col-md-3"><label class="form-label required">수량</label><input type="number" class="form-control" name="unitCount" min="1" required value="' + (f ? f.unitCount : 1) + '"></div>'
-      + '<div class="col-md-6"><label class="form-label">기판 · 재료</label><input type="text" class="form-control" name="substrate" placeholder="SiO2 285 nm / p++ Si" autocomplete="off"></div></div>'
+      + '<div class="col-md-6"><label class="form-label">기판 · 재료 <span class="form-label-description"><a href="library/index.html#tab=materials" target="_blank" rel="noopener">라이브러리에서 등록</a></span></label>' + substrateSelect(dom, '') + '</div></div>'
       + (f && (f.splits || []).length ? '<div class="form-hint mt-2">분기 수량의 합은 나눌 수량과 같아야 합니다. 이름·수량을 여기서 조정할 수 있습니다.</div>' + splitInputs(f) : '') + '</div>';
   }
   function newRunDialog(preFlowId) {
@@ -178,7 +186,7 @@
       var branches = {}, splits = {};
       Object.keys(v).forEach(function (k) { var mb = /^b_(.+)_(name|count)$/.exec(k); if (mb) { branches[mb[1]] = branches[mb[1]] || {}; branches[mb[1]][mb[2]] = v[k]; } var ms = /^s_(.+)$/.exec(k); if (ms) splits[ms[1]] = v[k]; });
       var unitLabel = v.unitLabel === '__custom' ? (v.unitLabelCustom || '') : v.unitLabel;
-      return store.createRun({ domain: domain, flowId: flowId === '__empty' ? null : flowId, title: v.title, team: m.team || readTeam(v, 'team'), sample: v.sample, substrate: v.substrate, goal: v.goal,
+      return store.createRun({ domain: domain, flowId: flowId === '__empty' ? null : flowId, title: v.title, team: m.team || readTeam(v, 'team'), sample: v.sample, substrate: readSubstrate(v), goal: v.goal,
         unitLabel: unitLabel, unitCount: v.unitCount, branches: branches, splits: splits, startedAt: v.startedAt ? new Date(v.startedAt).toISOString() : null });
     });
   }

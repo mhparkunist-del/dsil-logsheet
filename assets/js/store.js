@@ -121,6 +121,12 @@
       minutes: Math.max(0, Number(m.minutes) || 0), fields: normFields(m.fields), checklist: Array.isArray(m.checklist) ? m.checklist.map(str).filter(Boolean) : String(m.checklist || '').split(/\r?\n/).map(str).filter(Boolean),
       active: m.active === undefined ? (cur.active === undefined ? true : cur.active) : !!m.active, seed: !!cur.seed, ownerId: cur.ownerId || null, ownerName: cur.ownerName || '', createdAt: cur.createdAt || nowISO(), updatedAt: nowISO() };
   }
+  function normMaterial(m, cur) {
+    cur = cur || {};
+    var dom = str(m.domain); if (dom !== 'device' && dom !== 'package') dom = '';
+    return { id: cur.id || m.id || uid(), domain: dom, name: str(m.name), description: str(m.description), active: m.active === undefined ? (cur.active === undefined ? true : cur.active) : !!m.active,
+      seed: !!cur.seed, ownerId: cur.ownerId || null, ownerName: cur.ownerName || '', createdAt: cur.createdAt || nowISO(), updatedAt: nowISO() };
+  }
   function normRef(c) { if (!c || !c.moduleId) return null; return { id: c.id || uid(), moduleId: String(c.moduleId), label: str(c.label || c.name), params: (c.params && typeof c.params === 'object') ? c.params : {}, note: str(c.note) }; }
   function normRows(rows, normCell) {
     return (Array.isArray(rows) ? rows : []).map(function (r) {
@@ -414,10 +420,11 @@
     if (!lib) return added;
     (lib.modules || []).forEach(function (m) { if (byId(data.modules, m.id)) return; data.modules.push(normModule(m, { id: m.id, seed: true })); added.modules++; });
     (lib.flows || []).forEach(function (f) { var cur = byId(data.flows, f.id); var rec = normFlow(f, { id: f.id, seed: true }); if (cur) { if (cur.seed) Object.assign(cur, rec); return; } data.flows.push(rec); added.flows++; });
+    (lib.materials || []).forEach(function (m) { var cur = byId(data.materials, m.id); var rec = normMaterial(m, { id: m.id, seed: true }); if (cur) { if (cur.seed) Object.assign(cur, rec); return; } data.materials.push(rec); added.materials = (added.materials || 0) + 1; });
     data.library = { version: lib.version || '', importedAt: nowISO() };
     return added;
   }
-  function emptyData() { return { accounts: [], modules: [], flows: [], runs: [], logs: [], library: null }; }
+  function emptyData() { return { accounts: [], modules: [], flows: [], runs: [], logs: [], materials: [], library: null }; }
   /* 옛 흐름 items(트리) → rows/splits */
   function oldItemsToSheet(items, flows, unitCount) {
     function expand(list) {
@@ -434,7 +441,9 @@
   }
   function migrate(data, cfg, lib) {
     cfg = cfg || {};
-    ['accounts', 'modules', 'flows', 'runs', 'logs'].forEach(function (k) { if (!Array.isArray(data[k])) data[k] = []; });
+    ['accounts', 'modules', 'flows', 'runs', 'logs', 'materials'].forEach(function (k) { if (!Array.isArray(data[k])) data[k] = []; });
+    var seedMat = {}; if (lib) (lib.materials || []).forEach(function (m) { seedMat[m.id] = 1; });
+    data.materials = data.materials.map(function (m) { return normMaterial(m, { id: m.id, seed: !!m.seed || !!seedMat[m.id], ownerId: m.ownerId || null, ownerName: m.ownerName || '', createdAt: m.createdAt, active: m.active }); });
     if (!data.accounts.some(function (a) { return a.id === SUPER_ADMIN.id || nameKey(a.name) === nameKey(SUPER_ADMIN.name); })) data.accounts.unshift({ id: SUPER_ADMIN.id, name: SUPER_ADMIN.name, team: SUPER_ADMIN.team, seedPin: SUPER_ADMIN.seedPin, role: 'admin', createdAt: nowISO() });
     (cfg.defaultAccounts || []).forEach(function (d) { if (!d || !str(d.name) || data.accounts.some(function (a) { return nameKey(a.name) === nameKey(d.name); })) return; data.accounts.push({ id: uid(), name: str(d.name), team: str(d.team), seedPin: String(d.pin || '0000'), role: d.role === 'admin' ? 'admin' : 'member', createdAt: nowISO() }); });
     var seedM = {}, seedF = {}; if (lib) { (lib.modules || []).forEach(function (m) { seedM[m.id] = 1; }); (lib.flows || []).forEach(function (f) { seedF[f.id] = 1; }); }
@@ -585,6 +594,18 @@
         });
       },
       deleteFlow: function (id) { return wrap(function () { var f = byId(data.flows, id); if (!f) fail('흐름을 찾을 수 없습니다.'); libItemCheck(f, '흐름'); data.flows = data.flows.filter(function (x) { return x.id !== id; }); write(); emit(); }); },
+      listMaterials: function () { return Promise.resolve(clone(data.materials)); },
+      saveMaterial: function (m) {
+        return wrap(function () {
+          if (!str(m.name)) fail('기판 · 재료 이름을 입력하세요.');
+          var cur = m.id ? byId(data.materials, m.id) : null, who = libItemCheck(cur, '기판 · 재료');
+          if (data.materials.some(function (x) { return x.id !== (cur && cur.id) && x.name === str(m.name); })) fail('같은 이름의 기판 · 재료가 이미 있습니다.');
+          var rec = normMaterial(m, cur || { ownerId: who.id, ownerName: who.name });
+          if (cur) Object.assign(cur, rec); else data.materials.push(rec);
+          write(); emit(); return clone(cur || rec);
+        });
+      },
+      deleteMaterial: function (id) { return wrap(function () { var m = byId(data.materials, id); if (!m) fail('기판 · 재료를 찾을 수 없습니다.'); libItemCheck(m, '기판 · 재료'); data.materials = data.materials.filter(function (x) { return x.id !== id; }); write(); emit(); }); },
 
       listRuns: function (opts) {
         opts = opts || {};
@@ -642,6 +663,8 @@
   function fromFlow(f) { return { id: f.id, domain: f.domain, name: f.name, device: f.device, description: f.description, unit_label: f.unitLabel, unit_count: f.unitCount, rows: f.rows, splits: f.splits, active: f.active, seed: !!f.seed, owner_id: f.ownerId, owner_name: f.ownerName, updated_at: nowISO() }; }
   function toRun(r) { var run = { id: r.id, code: r.code, ownerId: r.owner_id || null, domain: r.domain || 'device', team: r.team || '', owner: r.owner || '', title: r.title, flowId: r.flow_id, flowName: r.flow_name || '', sample: r.sample || '', substrate: r.substrate || '', goal: r.goal || '', note: r.note || '', unitLabel: r.unit_label || '기판', unitCount: r.unit_count || 1, units: Array.isArray(r.units) ? r.units : [], rows: Array.isArray(r.rows) ? r.rows : null, splits: Array.isArray(r.splits) ? r.splits : [], steps: r.steps, tree: r.tree, status: r.status || 'active', archived: !!r.archived, archivedAt: r.archived_at || null, startedAt: r.started_at, endedAt: r.ended_at, createdAt: r.created_at, updatedAt: r.updated_at }; migrate({ runs: [run] }); return run; }
   function fromRun(r) { return { id: r.id, code: r.code, owner_id: r.ownerId, domain: r.domain, team: r.team, owner: r.owner, title: r.title, flow_id: r.flowId, flow_name: r.flowName, sample: r.sample, substrate: r.substrate, goal: r.goal, note: r.note, unit_label: r.unitLabel, unit_count: r.unitCount, units: r.units, rows: r.rows, splits: r.splits, status: r.status, archived: !!r.archived, archived_at: r.archivedAt, started_at: r.startedAt, ended_at: r.endedAt, updated_at: nowISO() }; }
+  function toMaterial(r) { return normMaterial({ id: r.id, domain: r.domain, name: r.name, description: r.description, active: r.active }, { id: r.id, seed: !!r.seed, ownerId: r.owner_id || null, ownerName: r.owner_name || '', createdAt: r.created_at }); }
+  function fromMaterial(m) { return { id: m.id, domain: m.domain, name: m.name, description: m.description, active: m.active, seed: !!m.seed, owner_id: m.ownerId, owner_name: m.ownerName, updated_at: nowISO() }; }
   function toLog(r) { return { id: r.id, runId: r.run_id, rowId: r.row_id || null, stepId: r.step_id, seq: r.seq, stepName: r.step_name || '', branch: r.branch || '', at: r.created_at, date: r.date || localDate(r.created_at), who: r.who || '', team: r.team || '', action: r.action, detail: r.detail || '' }; }
   function fromLog(l) { return { id: l.id, run_id: l.runId, row_id: l.rowId, step_id: l.stepId, seq: l.seq, step_name: l.stepName, branch: l.branch, who: l.who, team: l.team, action: l.action, detail: l.detail, date: l.date, created_at: l.at }; }
   function toAccount(r) { return { id: r.id, name: r.name, team: r.team || '', pinHash: r.pin_hash, role: r.role || 'member', createdAt: r.created_at }; }
@@ -687,6 +710,11 @@
             return client.from('modules').select('id', { count: 'exact', head: true }).then(function (res) {
               if (res.error || res.count > 0) return;
               return client.from('modules').insert(LIB.modules.map(function (m) { return fromModule(normModule(m, { id: m.id, seed: true })); })).then(unwrap).then(function () { return client.from('flows').insert(LIB.flows.map(function (f) { return fromFlow(normFlow(f, { id: f.id, seed: true })); })).then(unwrap); });
+            }).then(function () {
+              return client.from('materials').select('id', { count: 'exact', head: true }).then(function (res) {
+                if (res.error || res.count > 0 || !(LIB.materials || []).length) return;
+                return client.from('materials').insert(LIB.materials.map(function (m) { return fromMaterial(normMaterial(m, { id: m.id, seed: true })); })).then(unwrap);
+              });
             });
           });
         });
@@ -709,6 +737,9 @@
       listFlows: function () { return all('flows', toFlow); },
       saveFlow: function (f) { if (!str(f.name)) return reject('흐름 이름을 입력하세요.'); return (f.id ? client.from('flows').select('*').eq('id', f.id).maybeSingle().then(unwrap).then(function (r) { return r ? toFlow(r) : null; }) : Promise.resolve(null)).then(function (cur) { var who = libCheck(cur, '흐름'); var rec = normFlow(f, cur || { ownerId: who.id, ownerName: who.name }); if (!rec.rows.length) fail('흐름에 행을 하나 이상 넣으세요.'); SH.validate(rec, rec.unitLabel); return client.from('flows').upsert(fromFlow(rec)).select().single().then(unwrap).then(toFlow); }); },
       deleteFlow: function (id) { return client.from('flows').select('*').eq('id', id).maybeSingle().then(unwrap).then(function (r) { var cur = r ? toFlow(r) : null; if (!cur) fail('흐름을 찾을 수 없습니다.'); libCheck(cur, '흐름'); return client.from('flows').delete().eq('id', id).then(unwrap).then(function () {}); }); },
+      listMaterials: function () { return all('materials', toMaterial); },
+      saveMaterial: function (m) { if (!str(m.name)) return reject('기판 · 재료 이름을 입력하세요.'); return (m.id ? client.from('materials').select('*').eq('id', m.id).maybeSingle().then(unwrap).then(function (r) { return r ? toMaterial(r) : null; }) : Promise.resolve(null)).then(function (cur) { var who = libCheck(cur, '기판 · 재료'); var rec = normMaterial(m, cur || { ownerId: who.id, ownerName: who.name }); return client.from('materials').upsert(fromMaterial(rec)).select().single().then(unwrap).then(toMaterial); }); },
+      deleteMaterial: function (id) { return client.from('materials').select('*').eq('id', id).maybeSingle().then(unwrap).then(function (r) { var cur = r ? toMaterial(r) : null; if (!cur) fail('기판 · 재료를 찾을 수 없습니다.'); libCheck(cur, '기판 · 재료'); return client.from('materials').delete().eq('id', id).then(unwrap).then(function () {}); }); },
 
       listRuns: function (opts) { opts = opts || {}; var m = me(), scope = opts.scope || 'mine'; if (!m) return Promise.resolve([]); var q = client.from('runs').select('*'); if (scope === 'archive') q = q.eq('archived', true); else if (scope !== 'all' || !m.isAdmin) q = q.eq('owner_id', m.id); return q.order('updated_at', { ascending: false }).limit(500).then(unwrap).then(function (rows) { return rows.map(toRun); }); },
       getRun: function (id) { return client.from('runs').select('*').eq('id', id).maybeSingle().then(unwrap).then(function (r) { if (!r) return null; var run = toRun(r); if (!canView(run)) return null; run.canEdit = canEdit(run); run.isOwner = isOwner(run); return run; }); },

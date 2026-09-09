@@ -15,7 +15,27 @@
   function A(id, category, name, moduleId, params, note) { return R(id, category, name, { all: M(moduleId, params) }, note); }
 
   window.DSIL_LIBRARY = {
-    version: '2026-09-09a',
+    version: '2026-09-09b',
+    /* 자주 쓰는 기판 · 재료 (새 런 / 런 정보의 "기판 · 재료" 드롭다운). domain '' = 두 분류 모두 */
+    materials: [
+      { id: 'mat-sio2-285', domain: 'device', name: 'SiO2 285 nm / p++ Si', description: '표준 백게이트 기판 (열산화막 285 nm, 2D 플레이크 콘트라스트 최적)' },
+      { id: 'mat-sio2-90', domain: 'device', name: 'SiO2 90 nm / p++ Si', description: '얇은 게이트 산화막 백게이트 기판' },
+      { id: 'mat-sio2-300', domain: 'device', name: 'SiO2 300 nm / p++ Si', description: '열산화막 300 nm 백게이트 기판' },
+      { id: 'mat-si-bare', domain: 'device', name: 'Si (100) bare', description: '산화막 없는 실리콘 웨이퍼' },
+      { id: 'mat-hbn-sio2', domain: 'device', name: 'hBN / SiO2 285 nm / p++ Si', description: 'hBN 을 먼저 전사한 백게이트 기판' },
+      { id: 'mat-sapphire', domain: 'device', name: 'Sapphire (c-plane, 0001)', description: 'CVD 성장용 사파이어 기판' },
+      { id: 'mat-quartz', domain: 'device', name: 'Quartz (fused silica)', description: '투명 · 절연 기판 (광학 측정)' },
+      { id: 'mat-glass', domain: 'device', name: 'Glass (Eagle XG)', description: '디스플레이용 무알칼리 유리' },
+      { id: 'mat-pet', domain: 'device', name: 'PET 필름', description: '유연 소자용 폴리에스터 필름' },
+      { id: 'mat-pi', domain: 'device', name: 'PI (폴리이미드) 필름', description: '내열 유연 기판' },
+      { id: 'mat-prepattern-au', domain: 'device', name: 'Au 프리패턴 전극 기판', description: '전극이 미리 형성된 SiO2/Si 기판' },
+      { id: 'mat-dip24', domain: 'package', name: 'DIP-24 패키지', description: '와이어 본딩용 세라믹 DIP' },
+      { id: 'mat-qfn32', domain: 'package', name: 'QFN-32 패키지', description: '리드리스 QFN' },
+      { id: 'mat-fr4', domain: 'package', name: 'FR-4 PCB 기판', description: '플립칩 · 모듈 실장용 PCB' },
+      { id: 'mat-ltcc', domain: 'package', name: 'LTCC 기판', description: '저온 동시소성 세라믹' },
+      { id: 'mat-si-interposer', domain: 'package', name: 'Si 인터포저', description: 'TSV 실리콘 인터포저' },
+      { id: 'mat-glass-interposer', domain: 'package', name: '유리 인터포저', description: 'TGV 유리 인터포저' }
+    ],
     modules: [
       /* ---------- 반도체 소자 공정 ---------- */
       { id: 'm-substrate-clean', domain: 'device', name: '기판 용매 세정', category: 'clean', equipment: '습식 벤치 · 초음파 세척기', minutes: 20,

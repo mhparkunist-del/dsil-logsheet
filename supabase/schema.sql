@@ -69,6 +69,23 @@ alter table public.flows add column if not exists unit_count integer not null de
 alter table public.flows add column if not exists rows jsonb not null default '[]'::jsonb;
 alter table public.flows add column if not exists splits jsonb not null default '[]'::jsonb;
 
+-- 자주 쓰는 기판 · 재료 (새 런 / 런 정보의 드롭다운). domain '' = 두 분류 모두. seed = 기본 제공(잠금)
+create table if not exists public.materials (
+  id           text primary key,
+  domain       text not null default '',
+  name         text not null,
+  description  text not null default '',
+  active       boolean not null default true,
+  seed         boolean not null default false,
+  owner_id     text,
+  owner_name   text not null default '',
+  created_at   timestamptz not null default now(),
+  updated_at   timestamptz not null default now()
+);
+alter table public.materials enable row level security;
+drop policy if exists "materials: all" on public.materials;
+create policy "materials: all" on public.materials for all to anon, authenticated using (true) with check (true);
+
 create table if not exists public.runs (
   id           text primary key,
   code         text not null,
@@ -167,6 +184,8 @@ drop trigger if exists flows_touch on public.flows;
 create trigger flows_touch before update on public.flows for each row execute procedure public.touch_updated_at();
 drop trigger if exists runs_touch on public.runs;
 create trigger runs_touch before update on public.runs for each row execute procedure public.touch_updated_at();
+drop trigger if exists materials_touch on public.materials;
+create trigger materials_touch before update on public.materials for each row execute procedure public.touch_updated_at();
 
 do $$ begin alter publication supabase_realtime add table public.runs;    exception when duplicate_object then null; end $$;
 do $$ begin alter publication supabase_realtime add table public.modules; exception when duplicate_object then null; end $$;

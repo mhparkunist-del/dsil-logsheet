@@ -17,27 +17,53 @@
   var SH = window.DSILSheet, U = window.DSILUI, esc = U.esc, $all = U.$all;
 
   function td(cls, inner, span) { return '<td class="' + cls + '"' + (span > 1 ? ' colspan="' + span + '"' : '') + '>' + inner + '</td>'; }
+  function defaultUnits(sheet, units, unitLabel) {
+    var n = Math.max(1, sheet.unitCount || 1), out = (units || []).slice(0, n);
+    for (var i = 0; i < n; i++) if (!out[i]) out[i] = (unitLabel || '기판') + ' ' + (i + 1);
+    return out;
+  }
+  /* 표의 열 = 시트 전체에서 분기 경계로 나뉘는 단위 구간 (단위마다 열을 만들지 않음). 예: 기판 16, 분기 8/8 → 열 2개 "기판 1–8", "기판 9–16" */
+  function columns(sheet, lay, units, unitLabel) {
+    var n = Math.max(1, sheet.unitCount || 1), marks = {}; marks[0] = 1; marks[n] = 1;
+    (lay || SH.layout(sheet)).forEach(function (lr) { lr.cells.forEach(function (c) { marks[c.start] = 1; marks[c.start + c.count] = 1; }); });
+    var pts = Object.keys(marks).map(Number).filter(function (p) { return p >= 0 && p <= n; }).sort(function (a, b) { return a - b; });
+    var us = defaultUnits(sheet, units, unitLabel), custom = us.some(function (u, i) { return u !== (unitLabel || '기판') + ' ' + (i + 1); });
+    var cols = [];
+    for (var k = 0; k < pts.length - 1; k++) {
+      var a = pts[k], b = pts[k + 1], text;
+      if (b - a === 1) text = us[a];
+      else if (custom) text = us[a] + ' ~ ' + us[b - 1] + ' (' + (b - a) + ')';
+      else text = (unitLabel || '기판') + ' ' + (a + 1) + '–' + b + ' (' + (b - a) + ')';
+      cols.push({ start: a, count: b - a, text: text });
+    }
+    return cols;
+  }
+  function spanOf(cols, c) { var s = 0; cols.forEach(function (col) { if (col.start >= c.start && col.start + col.count <= c.start + c.count) s++; }); return Math.max(1, s); }
   function table(sheet, o) {
     o = o || {};
-    var lay = SH.layout(sheet), units = o.units || [], n = Math.max(1, sheet.unitCount || 1);
-    for (var i = 0; i < n; i++) if (!units[i]) units[i] = (o.unitLabel || '기판') + ' ' + (i + 1);
-    var html = '<table class="' + (o.tableClass || 'table card-table split-table') + '"><thead><tr><th class="step-col">' + esc(o.stepLabel || 'Step') + '</th>' + units.slice(0, n).map(function (u) { return '<th class="unit-col">' + esc(u) + '</th>'; }).join('') + '</tr></thead><tbody>';
+    var lay = SH.layout(sheet), cols = columns(sheet, lay, o.units, o.unitLabel);
+    var html = '<table class="' + (o.tableClass || 'table card-table split-table') + '"><thead><tr><th class="step-col">' + esc(o.stepLabel || 'Step') + '</th>' + cols.map(function (c) { return '<th class="unit-col">' + esc(c.text) + '</th>'; }).join('') + '</tr></thead><tbody>';
     lay.forEach(function (lr) {
       if (lr.type === 'split-head') {
         html += '<tr class="row-split-head"><td class="cell-rowhead cell-split-label">' + (o.splitLabel ? o.splitLabel(lr.split, lr.index) : '<i class="ti ti-git-branch"></i> ' + esc(lr.split.name || '분기점')) + '</td>'
-          + lr.cells.map(function (c) { return c.type === 'branch-head' ? td('cell-branch-head depth-' + c.leaf.depth, o.head ? o.head(c.leaf, c.split, lr.index) : '<b>' + esc(c.leaf.name) + '</b> ' + c.count, c.count) : td('cell-empty', '', c.count); }).join('') + '</tr>';
+          + lr.cells.map(function (c) { return c.type === 'branch-head' ? td('cell-branch-head depth-' + c.leaf.depth, o.head ? o.head(c.leaf, c.split, lr.index) : '<b>' + esc(c.leaf.name) + '</b> ' + c.count, spanOf(cols, c)) : td('cell-empty', '', spanOf(cols, c)); }).join('') + '</tr>';
       } else if (lr.type === 'row') {
         html += '<tr class="row-step" data-row="' + esc(lr.row.id) + '"><td class="cell-rowhead">' + (o.rowHead ? o.rowHead(lr.row, lr.index, lr.leaves) : (lr.index + 1) + '. ' + esc(lr.row.name)) + '</td>'
           + lr.cells.map(function (c) {
-            if (c.type === 'step') return td('cell-step depth-' + c.leaf.depth + ' ' + (o.cellClass ? o.cellClass(c.cell, c.leaf, lr.row, lr.index) : ''), o.cell ? o.cell(c.cell, c.leaf, lr.row, lr.index) : esc(c.cell.name || c.cell.label || ''), c.count);
-            return td('cell-skip depth-' + c.leaf.depth, o.skip ? o.skip(c.leaf, lr.row, lr.index) : '', c.count);
+            if (c.type === 'step') return td('cell-step depth-' + c.leaf.depth + ' ' + (o.cellClass ? o.cellClass(c.cell, c.leaf, lr.row, lr.index) : ''), o.cell ? o.cell(c.cell, c.leaf, lr.row, lr.index) : esc(c.cell.name || c.cell.label || ''), spanOf(cols, c));
+            return td('cell-skip depth-' + c.leaf.depth, o.skip ? o.skip(c.leaf, lr.row, lr.index) : '', spanOf(cols, c));
           }).join('') + '</tr>';
       } else {
         html += '<tr class="row-merge"><td class="cell-rowhead cell-merge-label">' + (o.mergeLabel ? o.mergeLabel(lr.split) : '<i class="ti ti-arrows-join"></i> 합침') + '</td>'
-          + lr.cells.map(function (c) { return c.type === 'merge' ? td('cell-merge', o.merge ? o.merge(c.split, c.leaf) : '', c.count) : td('cell-empty', '', c.count); }).join('') + '</tr>';
+          + lr.cells.map(function (c) { return c.type === 'merge' ? td('cell-merge', o.merge ? o.merge(c.split, c.leaf) : '', spanOf(cols, c)) : td('cell-empty', '', spanOf(cols, c)); }).join('') + '</tr>';
       }
     });
     return html + '</tbody></table>';
+  }
+  /* 단위 이름이 기본값("기판 1, 2, …")과 다를 때만 그 목록을 돌려줌 (런 정보 표시용) */
+  function customUnitNames(sheet, units, unitLabel) {
+    var us = defaultUnits(sheet, units, unitLabel);
+    return us.some(function (u, i) { return u !== (unitLabel || '기판') + ' ' + (i + 1); }) ? us.join(', ') : '';
   }
 
   /* ---------- 분기점 대화상자 조각 ---------- */
@@ -124,5 +150,5 @@
     var form = box.closest('form'); if (form) refreshPreview(form);
   });
 
-  window.DSILSheetView = { table: table, branchRows: branchRows, readBranches: readBranches, rowOptions: rowOptions, leafLabel: leafLabel, splitAddBody: splitAddBody, readSplitAdd: readSplitAdd, splitEditBody: splitEditBody, readSplitEdit: readSplitEdit };
+  window.DSILSheetView = { table: table, columns: columns, spanOf: spanOf, customUnitNames: customUnitNames, branchRows: branchRows, readBranches: readBranches, rowOptions: rowOptions, leafLabel: leafLabel, splitAddBody: splitAddBody, readSplitAdd: readSplitAdd, splitEditBody: splitEditBody, readSplitEdit: readSplitEdit };
 })();

@@ -16,7 +16,7 @@
   var PH = Object.assign({ maxEdge: 1400, quality: 0.85, maxPerStep: 6 }, CFG.photo || {});
   var STEP_CLS = { pending: 'bg-secondary-lt', done: 'bg-green-lt', skipped: 'bg-secondary-lt', failed: 'bg-red-lt' };
   var RUN_CLS = { active: 'bg-blue-lt', paused: 'bg-secondary-lt', done: 'bg-green-lt', aborted: 'bg-red-lt' };
-  var state = { ready: false, error: null, runId: null, openStepId: null, autoEdit: false, scope: 'mine', run: null, logs: [], modules: [], flows: [], runs: [], print: false, printMode: 'plan', editSheet: false, logFilter: 'all',
+  var state = { ready: false, error: null, runId: null, openStepId: null, autoEdit: false, scope: 'mine', run: null, logs: [], modules: [], flows: [], materials: [], runs: [], print: false, printMode: 'plan', editSheet: false, logFilter: 'all',
     filter: { domain: '', status: '', team: '', who: '', q: '' }, groupTeam: false, dialogStep: null };
 
   function me() { return store.getMe(); }
@@ -39,7 +39,7 @@
   }
 
   function reload() {
-    if (state.runId) return Promise.all([store.getRun(state.runId), store.listLogs(state.runId), store.listModules(), store.listFlows()]).then(function (r) { state.run = r[0]; state.logs = r[1]; state.modules = r[2]; state.flows = r[3]; });
+    if (state.runId) return Promise.all([store.getRun(state.runId), store.listLogs(state.runId), store.listModules(), store.listFlows(), store.listMaterials()]).then(function (r) { state.run = r[0]; state.logs = r[1]; state.modules = r[2]; state.flows = r[3]; state.materials = r[4]; });
     return store.listRuns({ scope: state.scope }).then(function (r) { state.runs = r; state.run = null; });
   }
 
@@ -177,7 +177,7 @@
     html += '<div class="card mb-3"><div class="card-body"><div class="row g-3 align-items-center">'
       + '<div class="col-lg-7"><div class="text-secondary small tnum">' + esc(r.code) + ' ' + domainBadge(r.domain) + ' <span class="badge ' + RUN_CLS[r.status] + '">' + esc(S.RUN_STATUS[r.status]) + '</span>' + (r.archived ? ' <span class="badge bg-teal-lt">아카이브</span>' : '') + (r.flowName ? ' · 흐름 <b>' + esc(r.flowName) + '</b> 복사' : ' · 직접 구성') + '</div>'
       + '<h2 class="mb-1">' + esc(r.title) + '</h2>'
-      + '<div class="datagrid run-meta">' + U.dg('팀', esc(r.team || '-')) + U.dg('담당자', esc(r.owner || '-')) + U.dg('시료 / 로트', esc(r.sample || '-')) + U.dg(r.unitLabel + ' 수량', r.unitCount + ' (' + esc(r.units.join(', ')) + ')') + U.dg('기판 · 재료', esc(r.substrate || '-')) + U.dg('시작', fmtDate(r.startedAt)) + (r.endedAt ? U.dg('종료', fmtDate(r.endedAt)) : '') + '</div>'
+      + '<div class="datagrid run-meta">' + U.dg('팀', esc(r.team || '-')) + U.dg('담당자', esc(r.owner || '-')) + U.dg('시료 / 로트', esc(r.sample || '-')) + U.dg(r.unitLabel + ' 수량', r.unitCount + (unitNames(r) ? ' <span class="text-secondary small">(' + esc(unitNames(r)) + ')</span>' : '')) + U.dg('기판 · 재료', esc(r.substrate || '-')) + U.dg('시작', fmtDate(r.startedAt)) + (r.endedAt ? U.dg('종료', fmtDate(r.endedAt)) : '') + '</div>'
       + (r.goal ? '<div class="mt-2 small"><i class="ti ti-target me-1 text-primary"></i>' + esc(r.goal) + '</div>' : '') + (r.note ? '<div class="mt-1 small text-secondary">' + esc(r.note) + '</div>' : '') + '</div>'
       + '<div class="col-lg-5"><div class="d-flex justify-content-between small mb-1"><span>' + pg.done + ' 완료' + (pg.skipped ? ' · ' + pg.skipped + ' 건너뜀' : '') + (pg.failed ? ' · <span class="text-red">' + pg.failed + ' 실패</span>' : '') + ' / ' + pg.total + ' 스텝 · ' + st.rows + '행' + (st.splits ? ' · 분기점 ' + st.splits : '') + '</span><span class="tnum">' + pg.pct + '%</span></div>'
       + '<div class="progress progress-sm mb-3"><div class="progress-bar" style="width:' + Math.round(pg.done / (pg.total || 1) * 100) + '%"></div><div class="progress-bar bg-secondary" style="width:' + Math.round(pg.skipped / (pg.total || 1) * 100) + '%"></div><div class="progress-bar bg-red" style="width:' + Math.round(pg.failed / (pg.total || 1) * 100) + '%"></div></div>'
@@ -198,6 +198,7 @@
     return html + '</div>';
   }
 
+  function unitNames(r) { return SV.customUnitNames(r, r.units, r.unitLabel); }
   /* ---------- 인쇄 · PPT ---------- */
   function subtitle() { var r = state.run; return [domainInfo(r.domain).label, r.team, r.owner, r.sample ? '시료 ' + r.sample : '', r.unitLabel + ' ' + r.unitCount, fmtDate(r.startedAt) + (r.endedAt ? ' ~ ' + fmtDate(r.endedAt) : ''), r.flowName].filter(Boolean).join(' · '); }
   function renderPrint() {
@@ -207,7 +208,7 @@
       + '<button type="button" class="btn btn-primary" data-action="pptx"><i class="ti ti-presentation me-1"></i>PPT 한 장 (.pptx)</button><button type="button" class="btn" data-action="print-now"><i class="ti ti-printer me-1"></i>인쇄 / PDF</button><span class="text-secondary small">첫 열 = Step(대분류), 나머지 열 = ' + esc(r.unitLabel) + '. 분기 구간은 분기별로 나란히, 비운 칸은 건너뜀.</span></div>';
     html += '<div class="rs-print"><div class="rs-head"><h1>공정 런시트 <span>Process Run Sheet · ' + (plan ? '계획' : '실제 기록') + '</span></h1><div class="rs-code">' + esc(r.code) + '</div></div>'
       + '<div class="rs-meta"><div><b>제목</b>' + esc(r.title) + '</div><div><b>분류</b>' + esc(domainInfo(r.domain).label) + '</div><div><b>팀 / 담당</b>' + esc(r.team) + ' / ' + esc(r.owner) + '</div><div><b>시료</b>' + esc(r.sample || '') + '</div>'
-      + '<div><b>' + esc(r.unitLabel) + '</b>' + r.unitCount + ' (' + esc(r.units.join(', ')) + ')</div><div><b>기판 · 재료</b>' + esc(r.substrate || '') + '</div><div><b>흐름</b>' + esc(r.flowName || '직접 구성') + '</div><div><b>시작 / 출력</b>' + fmtDate(r.startedAt) + ' / ' + fmtDate(new Date().toISOString()) + '</div></div>'
+      + '<div><b>' + esc(r.unitLabel) + '</b>' + r.unitCount + (unitNames(r) ? ' (' + esc(unitNames(r)) + ')' : '') + '</div><div><b>기판 · 재료</b>' + esc(r.substrate || '') + '</div><div><b>흐름</b>' + esc(r.flowName || '직접 구성') + '</div><div><b>시작 / 출력</b>' + fmtDate(r.startedAt) + ' / ' + fmtDate(new Date().toISOString()) + '</div></div>'
       + (r.goal ? '<div class="rs-goal"><b>목표 · 메모</b> ' + esc(r.goal) + '</div>' : '');
     html += SV.table(r, { tableClass: 'rs-split', units: r.units, unitLabel: r.unitLabel,
       rowHead: function (row, i) { return '<b>' + (i + 1) + '. ' + esc(row.name) + '</b><div class="g">' + esc(P.catInfo(row.category).label) + (row.note ? ' · ※ ' + esc(row.note) : '') + '</div>'; },
@@ -346,14 +347,20 @@
       + '<div class="row g-2 mt-1"><div class="col-md-4"><label class="form-label required">팀</label><input type="text" class="form-control" name="team" required list="team-list" value="' + esc(r.team) + '" autocomplete="off"><datalist id="team-list">' + teams().map(function (t) { return '<option value="' + esc(t) + '">'; }).join('') + '</datalist></div><div class="col-md-4"><label class="form-label required">담당자</label><input type="text" class="form-control" name="owner" required value="' + esc(r.owner) + '" autocomplete="off"></div><div class="col-md-4"><label class="form-label">시료 / 로트 ID</label><input type="text" class="form-control" name="sample" value="' + esc(r.sample) + '" autocomplete="off"></div></div>'
       + '<div class="row g-2 mt-1"><div class="col-md-3"><label class="form-label">단위</label><select class="form-select" name="unitLabel">' + units.map(function (u) { return '<option value="' + esc(u) + '"' + (u === r.unitLabel ? ' selected' : '') + '>' + esc(u) + '</option>'; }).join('') + '<option value="__custom"' + (custom ? ' selected' : '') + '>직접 입력…</option></select><div data-show-if="unitLabel=__custom" class="mt-1"><input type="text" class="form-control" name="unitLabelCustom" value="' + esc(custom ? r.unitLabel : '') + '" autocomplete="off"></div></div>'
       + '<div class="col-md-2"><label class="form-label">수량</label><input type="number" class="form-control" name="unitCount" min="1" value="' + r.unitCount + '"' + ((r.splits || []).length ? ' disabled title="분기점이 있어 바꿀 수 없습니다"' : '') + '></div>'
-      + '<div class="col-md-7"><label class="form-label">' + esc(r.unitLabel) + ' 이름 (' + r.unitCount + '개, 쉼표 구분)</label><input type="text" class="form-control" name="units" value="' + esc(r.units.join(', ')) + '" autocomplete="off"></div></div>'
-      + '<div class="mt-2"><label class="form-label">기판 · 재료</label><input type="text" class="form-control" name="substrate" value="' + esc(r.substrate) + '" autocomplete="off"></div>'
+      + '<div class="col-md-7"><label class="form-label">' + esc(r.unitLabel) + ' 이름 <span class="form-label-description">선택 · ' + r.unitCount + '개 쉼표 구분, 비우면 번호</span></label><input type="text" class="form-control" name="units" value="' + esc(unitNames(r)) + '" autocomplete="off" placeholder="' + esc(r.unitLabel) + ' 1, ' + esc(r.unitLabel) + ' 2, …"></div></div>'
+      + '<div class="mt-2"><label class="form-label">기판 · 재료 <span class="form-label-description"><a href="../library/index.html#tab=materials" target="_blank" rel="noopener">라이브러리에서 등록</a></span></label>' + substrateSelect(r.domain, r.substrate) + '</div>'
       + '<div class="mt-2"><label class="form-label">목표 · 메모</label><textarea class="form-control" name="goal" rows="2">' + esc(r.goal) + '</textarea></div><div class="mt-2"><label class="form-label">비고</label><input type="text" class="form-control" name="note" value="' + esc(r.note) + '" autocomplete="off"></div>';
     return dialog({ title: '런 정보 수정', bodyHtml: body, okLabel: '저장', size: 'lg', submit: function (v) {
-      var patch = { title: v.title, startedAt: v.startedAt ? fromLocalInput(v.startedAt) : undefined, team: v.team, owner: v.owner, sample: v.sample, unitLabel: v.unitLabel === '__custom' ? v.unitLabelCustom : v.unitLabel, substrate: v.substrate, goal: v.goal, note: v.note };
-      if (v.unitCount !== undefined && Number(v.unitCount) !== r.unitCount) patch.unitCount = v.unitCount; else patch.units = v.units;
+      var patch = { title: v.title, startedAt: v.startedAt ? fromLocalInput(v.startedAt) : undefined, team: v.team, owner: v.owner, sample: v.sample, unitLabel: v.unitLabel === '__custom' ? v.unitLabelCustom : v.unitLabel, substrate: v.substrate === '__custom' ? (v.substrateCustom || '') : (v.substrate || ''), goal: v.goal, note: v.note };
+      if (v.unitCount !== undefined && Number(v.unitCount) !== r.unitCount) patch.unitCount = v.unitCount; else if (String(v.units || '').trim()) patch.units = v.units; else patch.units = r.units.map(function (u, i) { return (v.unitLabel === '__custom' ? (v.unitLabelCustom || r.unitLabel) : v.unitLabel) + ' ' + (i + 1); });
       return store.updateRun(r.id, patch);
     } });
+  }
+  function substrateSelect(dom, value) {
+    var list = state.materials.filter(function (m) { return m.active !== false && (!m.domain || m.domain === dom); });
+    var custom = !!value && !list.some(function (m) { return m.name === value; });
+    return '<select class="form-select" name="substrate"><option value=""' + (!value ? ' selected' : '') + '>선택 안 함</option>' + list.map(function (m) { return '<option value="' + esc(m.name) + '"' + (m.name === value ? ' selected' : '') + (m.description ? ' title="' + esc(m.description) + '"' : '') + '>' + esc(m.name) + '</option>'; }).join('') + '<option value="__custom"' + (custom ? ' selected' : '') + '>직접 입력…</option></select>'
+      + '<div data-show-if="substrate=__custom" class="mt-1"><input type="text" class="form-control" name="substrateCustom" placeholder="예: SiO2 285 nm / p++ Si" value="' + esc(custom ? value : '') + '" autocomplete="off"></div>';
   }
   function moreDialog(r) {
     var active = r.status === 'active', finished = r.status === 'done' || r.status === 'aborted', owner = !!r.isOwner, editable = !ro();

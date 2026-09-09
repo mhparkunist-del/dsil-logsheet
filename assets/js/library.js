@@ -12,14 +12,15 @@
   var store = S.create(CFG);
   var DOMAINS = CFG.domains || [];
   var CATS = CFG.categories || [];
-  var state = { ready: false, error: null, tab: 'modules', domain: '', mineOnly: false, modules: [], flows: [], runs: [], editModule: null, editFlow: null, q: '' };
+  var state = { ready: false, error: null, tab: 'modules', domain: '', mineOnly: false, modules: [], flows: [], materials: [], runs: [], editModule: null, editFlow: null, editMaterial: null, q: '' };
 
   function me() { return store.getMe(); }
   function modById(id) { return state.modules.filter(function (m) { return m.id === id; })[0] || null; }
   function flowById(id) { return state.flows.filter(function (f) { return f.id === id; })[0] || null; }
   function domainInfo(id) { return DOMAINS.filter(function (d) { return d.id === id; })[0] || { id: id, label: id || '-', short: id || '-' }; }
   function domainBadge(id) { return '<span class="badge ' + (id === 'package' ? 'bg-indigo-lt' : 'bg-blue-lt') + '">' + esc(domainInfo(id).short) + '</span>'; }
-  function readHash() { var m = /tab=(\w+)/.exec(window.location.hash); state.tab = m && m[1] === 'flows' ? 'flows' : 'modules'; var d = /domain=(\w+)/.exec(window.location.hash); if (d) state.domain = d[1] === 'all' ? '' : d[1]; }
+  function readHash() { var m = /tab=(\w+)/.exec(window.location.hash); state.tab = m && (m[1] === 'flows' || m[1] === 'materials') ? m[1] : 'modules'; var d = /domain=(\w+)/.exec(window.location.hash); if (d) state.domain = d[1] === 'all' ? '' : d[1]; }
+  function matById(id) { return state.materials.filter(function (m) { return m.id === id; })[0] || null; }
   function inDomain(x) { return !state.domain || x.domain === state.domain; }
   function canEditItem(x) { var m = me(); return !x.seed && !!m.id && (m.isAdmin || !x.ownerId || x.ownerId === m.id); }
   function isMine(x) { var m = me(); return !!m.id && x.ownerId === m.id; }
@@ -28,7 +29,7 @@
   function usesModule(sheet, id) { return (sheet.rows || []).some(function (r) { return Object.keys(r.cells || {}).some(function (k) { return r.cells[k] && r.cells[k].moduleId === id; }); }); }
   function catSelect(name, value, allowFollow) { return '<select class="form-select" name="' + name + '">' + (allowFollow ? '<option value=""' + (!value ? ' selected' : '') + '>모듈 분류 따르기</option>' : '') + CATS.map(function (c) { return '<option value="' + c.id + '"' + (value === c.id ? ' selected' : '') + '>' + esc(c.label) + '</option>'; }).join('') + '</select>'; }
 
-  function reload() { return Promise.all([store.listModules(), store.listFlows(), store.listRuns({ scope: 'mine' })]).then(function (r) { state.modules = r[0]; state.flows = r[1]; state.runs = r[2]; }); }
+  function reload() { return Promise.all([store.listModules(), store.listFlows(), store.listRuns({ scope: 'mine' }), store.listMaterials()]).then(function (r) { state.modules = r[0]; state.flows = r[1]; state.runs = r[2]; state.materials = r[3]; }); }
 
   function moduleUsage(id) { return { flows: state.flows.filter(function (f) { return usesModule(f, id); }), runs: state.runs.filter(function (r) { return usesModule(r, id); }).length }; }
   function flowUsage(id) { return { runs: state.runs.filter(function (r) { return r.flowId === id; }).length }; }
@@ -43,11 +44,38 @@
     var app = $('#app'); renderChrome(); if (!app) return;
     if (state.error) { app.innerHTML = '<div class="alert alert-danger"><h4 class="alert-title">오류</h4><div class="text-secondary">' + esc(state.error) + '</div></div>'; return; }
     if (!state.ready) { app.innerHTML = '<div class="text-secondary text-center py-5">불러오는 중…</div>'; return; }
-    var mods = visible(state.modules), flows = visible(state.flows);
+    var mods = visible(state.modules), flows = visible(state.flows), mats = state.materials.filter(function (x) { return !state.domain || !x.domain || x.domain === state.domain; }).filter(function (x) { return !state.mineOnly || isMine(x); });
     var html = '<div class="d-flex flex-wrap align-items-center gap-2 mb-3"><div class="btn-group">' + [{ id: '', label: '전체' }].concat(DOMAINS).map(function (d) { return '<button type="button" class="btn' + (state.domain === d.id ? ' active btn-primary' : '') + '" data-action="domain" data-domain="' + d.id + '">' + (d.icon ? '<i class="ti ti-' + d.icon + ' me-1"></i>' : '') + esc(d.label) + '</button>'; }).join('') + '</div>'
       + '<label class="form-check mb-0 ms-2"><input class="form-check-input" type="checkbox" data-action="mine-only"' + (state.mineOnly ? ' checked' : '') + '><span class="form-check-label">내가 만든 것만</span></label>'
-      + '<ul class="nav nav-tabs ms-md-3 mb-0 flex-fill"><li class="nav-item"><a class="nav-link' + (state.tab === 'modules' ? ' active' : '') + '" href="#tab=modules"><i class="ti ti-box me-1"></i>공정 모듈 <span class="badge bg-secondary-lt ms-1">' + mods.length + '</span></a></li><li class="nav-item"><a class="nav-link' + (state.tab === 'flows' ? ' active' : '') + '" href="#tab=flows"><i class="ti ti-git-branch me-1"></i>공정 흐름 <span class="badge bg-secondary-lt ms-1">' + flows.length + '</span></a></li></ul></div>';
-    app.innerHTML = html + (state.tab === 'flows' ? renderFlows(flows) : renderModules(mods));
+      + '<ul class="nav nav-tabs ms-md-3 mb-0 flex-fill"><li class="nav-item"><a class="nav-link' + (state.tab === 'modules' ? ' active' : '') + '" href="#tab=modules"><i class="ti ti-box me-1"></i>공정 모듈 <span class="badge bg-secondary-lt ms-1">' + mods.length + '</span></a></li><li class="nav-item"><a class="nav-link' + (state.tab === 'flows' ? ' active' : '') + '" href="#tab=flows"><i class="ti ti-git-branch me-1"></i>공정 흐름 <span class="badge bg-secondary-lt ms-1">' + flows.length + '</span></a></li><li class="nav-item"><a class="nav-link' + (state.tab === 'materials' ? ' active' : '') + '" href="#tab=materials"><i class="ti ti-layers-intersect me-1"></i>기판 · 재료 <span class="badge bg-secondary-lt ms-1">' + mats.length + '</span></a></li></ul></div>';
+    app.innerHTML = html + (state.tab === 'flows' ? renderFlows(flows) : state.tab === 'materials' ? renderMaterials(mats) : renderModules(mods));
+  }
+
+  /* ---------- 기판 · 재료 ---------- */
+  function renderMaterials(mats) {
+    var html = '<div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3"><div class="text-secondary small">자주 쓰는 기판 · 재료를 등록해 두면 새 런 / 런 정보의 <b>기판 · 재료</b> 드롭다운에서 바로 고를 수 있습니다. 분류를 비우면 소자·패키징 어디서나 보입니다. <span class="badge bg-secondary-lt"><i class="ti ti-lock"></i> 기본</span> 항목은 수정·삭제할 수 없습니다.</div>'
+      + '<button type="button" class="btn btn-sm btn-primary" data-action="mat-new"><i class="ti ti-plus me-1"></i>기판 · 재료 추가</button></div>';
+    if (state.editMaterial) html += materialEditor(state.editMaterial);
+    if (!mats.length) return html + '<div class="card">' + empty('layers-off', '등록된 기판 · 재료가 없습니다', '"기판 · 재료 추가"로 등록하세요.') + '</div>';
+    var doms = DOMAINS.map(function (d) { return d.id; });
+    mats = mats.slice().sort(function (a, b) { var da = doms.indexOf(a.domain), db = doms.indexOf(b.domain); if (da !== db) return da - db; return a.name.localeCompare(b.name, 'ko'); });
+    html += '<div class="card"><div class="table-responsive"><table class="table table-vcenter card-table"><thead><tr><th>기판 · 재료</th><th class="w-1">분류</th><th>설명</th><th class="w-1">출처</th><th class="w-1"></th></tr></thead><tbody>'
+      + mats.map(function (m) {
+        var ed = canEditItem(m);
+        return '<tr' + (m.active === false ? ' class="text-secondary"' : '') + '><td class="fw-medium">' + esc(m.name) + (m.active === false ? ' <span class="badge bg-secondary-lt">숨김</span>' : '') + '</td><td class="text-nowrap">' + (m.domain ? domainBadge(m.domain) : '<span class="badge bg-secondary-lt">모두</span>') + '</td><td class="small text-secondary">' + esc(m.description || '') + '</td><td class="text-nowrap">' + ownerBadge(m) + '</td>'
+          + '<td class="text-end text-nowrap">' + (ed ? '<button type="button" class="btn btn-sm btn-ghost-primary btn-icon" data-action="mat-edit" data-id="' + esc(m.id) + '" title="수정"><i class="ti ti-pencil"></i></button><button type="button" class="btn btn-sm btn-ghost-danger btn-icon" data-action="mat-delete" data-id="' + esc(m.id) + '" title="삭제"><i class="ti ti-trash"></i></button>' : '<span class="text-secondary small"><i class="ti ti-lock"></i></span>') + '</td></tr>';
+      }).join('') + '</tbody></table></div></div>';
+    return html;
+  }
+  function materialEditor(m) {
+    var isNew = !m.id;
+    return '<div class="card mb-3 border-primary" id="mat-form-card"><div class="card-header"><h3 class="card-title">' + (isNew ? '기판 · 재료 추가' : '기판 · 재료 수정: ' + esc(m.name)) + '</h3></div><div class="card-body"><form id="material-form">'
+      + '<input type="hidden" name="matId" value="' + esc(m.id || '') + '">'
+      + '<div class="row g-2"><div class="col-md-5"><label class="form-label required">이름 <span class="form-label-description">드롭다운에 보이는 그대로</span></label><input type="text" class="form-control" name="name" required value="' + esc(m.name || '') + '" autocomplete="off" placeholder="예: SiO2 285 nm / p++ Si"></div>'
+      + '<div class="col-md-3"><label class="form-label">공정 분류</label><select class="form-select" name="domain"><option value=""' + (!m.domain ? ' selected' : '') + '>모두</option>' + DOMAINS.map(function (d) { return '<option value="' + d.id + '"' + (m.domain === d.id ? ' selected' : '') + '>' + esc(d.label) + '</option>'; }).join('') + '</select></div>'
+      + '<div class="col-md-4"><label class="form-label">설명 <span class="form-label-description">두께, 공급처, 용도 등</span></label><input type="text" class="form-control" name="description" value="' + esc(m.description || '') + '" autocomplete="off"></div></div>'
+      + (isNew ? '' : '<label class="form-check mt-3"><input class="form-check-input" type="checkbox" name="active"' + (m.active !== false ? ' checked' : '') + '><span class="form-check-label">드롭다운에 표시</span></label>')
+      + '<div class="mt-3 d-flex gap-2"><button type="submit" class="btn btn-primary">' + (isNew ? '추가' : '저장') + '</button><button type="button" class="btn" data-action="mat-cancel">취소</button></div></form></div></div>';
   }
 
   /* ---------- 모듈 ---------- */
@@ -252,7 +280,7 @@
   });
   document.addEventListener('change', function (e) {
     if (e.target.closest('#flow-form') && (e.target.name === 'domain' || e.target.name === 'unitLabel')) { syncFromDom(); rerender(); return; }
-    if (e.target.getAttribute('data-action') === 'mine-only') { state.mineOnly = e.target.checked; state.editModule = null; state.editFlow = null; render(); }
+    if (e.target.getAttribute('data-action') === 'mine-only') { state.mineOnly = e.target.checked; state.editModule = null; state.editFlow = null; state.editMaterial = null; render(); }
   });
   document.addEventListener('submit', function (e) {
     var fid = e.target.getAttribute && e.target.getAttribute('id');
@@ -262,6 +290,12 @@
       var m = { id: v.modId || undefined, domain: v.domain, name: v.name, category: v.category, equipment: v.equipment, minutes: v.minutes, description: v.description, checklist: v.checklist, fields: P.readFieldRows(e.target) };
       if ('active' in v) m.active = !!v.active;
       store.saveModule(m).then(function (saved) { toast('모듈 "' + saved.name + '" 을 저장했습니다.'); state.editModule = null; return refresh(); }).catch(handleError);
+    }
+    if (fid === 'material-form') {
+      e.preventDefault();
+      var mv = readForm(e.target), mat = { id: mv.matId || undefined, domain: mv.domain, name: mv.name, description: mv.description };
+      if ('active' in mv) mat.active = !!mv.active;
+      store.saveMaterial(mat).then(function (saved) { toast('기판 · 재료 "' + saved.name + '" 을 저장했습니다.'); state.editMaterial = null; return refresh(); }).catch(handleError);
     }
     if (fid === 'flow-form') {
       e.preventDefault();
@@ -275,7 +309,11 @@
     var el = e.target.closest('[data-action]'); if (!el) return;
     var action = el.getAttribute('data-action'), id = el.getAttribute('data-id'), f = state.editFlow;
     switch (action) {
-      case 'domain': state.domain = el.getAttribute('data-domain') || ''; state.editModule = null; state.editFlow = null; render(); break;
+      case 'domain': state.domain = el.getAttribute('data-domain') || ''; state.editModule = null; state.editFlow = null; state.editMaterial = null; render(); break;
+      case 'mat-new': state.editMaterial = { domain: state.domain || '' }; render(); scrollTo('#mat-form-card'); break;
+      case 'mat-edit': { var me1 = matById(id); if (!me1) break; state.editMaterial = JSON.parse(JSON.stringify(me1)); render(); scrollTo('#mat-form-card'); break; }
+      case 'mat-cancel': state.editMaterial = null; render(); break;
+      case 'mat-delete': { var mdl = matById(id); if (!mdl) break; confirmDlg({ title: '기판 · 재료 삭제', message: '"' + mdl.name + '" 을 목록에서 지울까요? 이미 만든 런의 기판 · 재료 값은 그대로 남습니다.', okLabel: '삭제', danger: true }).then(function (ok) { if (!ok) return; return store.deleteMaterial(id).then(function () { toast('삭제했습니다.'); return refresh(); }); }).catch(handleError); break; }
       case 'mod-new': state.editModule = { fields: [], checklist: [], domain: state.domain || DOMAINS[0].id }; render(); scrollTo('#mod-form-card'); break;
       case 'mod-edit': state.editModule = JSON.parse(JSON.stringify(modById(id))); render(); scrollTo('#mod-form-card'); break;
       case 'mod-view': state.editModule = Object.assign(JSON.parse(JSON.stringify(modById(id))), { _view: true }); render(); scrollTo('#mod-form-card'); break;
@@ -307,10 +345,10 @@
       case 'fe-split-close': { if (!f) break; var rowC = el.getAttribute('data-row'); tryMutate(function (w) { SH.splitCloseAt(w, rowC, S.cloneRef, S.always, S.always, w.unitLabel); }); break; }
     }
   });
-  window.addEventListener('hashchange', function () { readHash(); state.editModule = null; state.editFlow = null; render(); });
+  window.addEventListener('hashchange', function () { readHash(); state.editModule = null; state.editFlow = null; state.editMaterial = null; render(); });
 
   store.init().then(function () {
     if (!store.getSession()) { window.location.replace('../index.html?next=library'); return; }
-    state.ready = true; readHash(); store.onChange(function () { reload().then(function () { if (!state.editModule && !state.editFlow) render(); }).catch(handleError); }); return refresh();
+    state.ready = true; readHash(); store.onChange(function () { reload().then(function () { if (!state.editModule && !state.editFlow && !state.editMaterial) render(); }).catch(handleError); }); return refresh();
   }).catch(function (err) { state.error = err && err.message ? err.message : String(err); render(); });
 })();
